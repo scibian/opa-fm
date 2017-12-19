@@ -1,0 +1,74 @@
+opa-fm (10.5.1.0-1-2ifs+c9u1) calibre9; urgency=medium
+
+  * Build for Calibre9
+  * Add a debian/gbp.conf file
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 19 Dec 2017 16:46:00 +0100
+
+opa-fm (10.5.1.0-1-2ifs) UNRELEASED; urgency=medium
+
+  * Ported functionality of comp_qlgc_fm.pl required by opaconfig to Debian.
+  * Ported sm_capture.sh to Debian. This is installed as fm_capture.
+  * Correct lintian warning about executable opafm_src.xml.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 11 Oct 2017 14:11:11 -0500
+
+opa-fm (10.5.1.0-1-1ifs) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.5.1.0-1 from IFS 10.5.1.0.2 upstream.
+  * Patched manpages to correct lintian complaints.
+  * Maintainer scripts use dh-systemd.
+  * Maintainer scripts detect errors
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 22 Sep 2017 11:39:38 -0500
+
+opa-fm (10.4.1.0-1-1ifs) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.4.1.0-1 from IFS 10.4.2.0.7 upstream.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 13 Jul 2017 14:31:56 -0500
+
+opa-fm (10.3.1.0-5-2ifs) UNRELEASED; urgency=medium
+
+  * Changed libibmad dependency to libibmad5.
+  * Patched to build on stretch.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 19 Jun 2017 15:47:46 -0500
+
+opa-fm (10.3.1.0-5-1ifs) UNRELEASED; urgency=medium
+
+  * Convert to quilt format. Corrected version.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 09 Jun 2017 15:38:51 -0500
+
+opa-fm (10.3.1.0.5) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.3.1.0-5 from upstream IFS 10.3.1.0.19.
+  * Create /var/crash during installation.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 01 Feb 2017 13:51:35 -0600
+
+opa-fm (10.3.0.0.67) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.3.0.0-67 from upstream IFS 10.3.0.0.81.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 05 Jan 2017 16:11:35 -0600
+
+opa-fm (10.2.0.0.151) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.2.0.0-151 from upstream IFS 10.2.0.0.158.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 03 Oct 2016 18:18:35 -0500
+
+opa-fm (10.1.1.0) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.1.1.0-6 from upstream IFS 10.1.1.0.9.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 27 Jul 2016 12:29:35 -0500
+
+opa-fm (10.1.0.0) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.1.0.0-145 from upstream IFS 10.1.0.0.145
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 8 Jul 2016 12:40:35 -0500
+

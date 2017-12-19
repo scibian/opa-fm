@@ -1,0 +1,40 @@
+Description: Correct path to lspci
+ Scripts have hardcoded path to /sbin/lspci. It is /usr/bin/lcpsi on Debian.
+ .
+ opa-fm (10.3.1.0-5-1ifs) UNRELEASED; urgency=medium
+ .
+   * Convert to quilt format. Corrected version.
+Author: Brian T. Smith <bsmith@systemfabricworks.com>
+Copyright: 2017 System Fabric Works, Inc. All Rights Reserved.
+Forwarded: no
+Last-Update: <2017-06-09>
+
+---
+
+
+--- a/CommonInstall/util_driver.pl
++++ b/CommonInstall/util_driver.pl
+@@ -337,8 +337,8 @@
+ # provide a verbose message during install
+ sub check_pcie_link
+ {
+-	my $setpci = '/sbin/setpci';
+-	my $lspci = '/sbin/lspci';
++	my $setpci = '/usr/bin/setpci';
++	my $lspci = '/usr/bin/lspci';
+     if (open (PCI, "$lspci -d 15b3: -n|")) {
+         while(<PCI>) {
+             my $devinfo = $_;
+--- a/CommonInstall/util_init.pl
++++ b/CommonInstall/util_init.pl
+@@ -95,8 +95,8 @@
+ 
+ 
+ # Command paths
+-my $LSPCI = "/sbin/lspci";
+-my $RPM="/bin/rpm";
++my $LSPCI = "/usr/bin/lspci";
++my $RPM="/usr/bin/rpm";
+ 
+ # a few key commands to verify exist
+ my @verify_cmds = ( "uname", "mv", "cp", "rm", "ln", "cmp", "yes", "echo", "sed", "chmod", "chown", "chgrp", "mkdir", "rmdir", "grep", "diff", "awk", "find", "xargs", "sort", $RPM, "chroot", $LSPCI );

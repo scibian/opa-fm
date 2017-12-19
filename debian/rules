@@ -1,0 +1,37 @@
+#!/usr/bin/make -f
+#
+# Copyright (c)2016 System Fabric Works, Inc.
+#
+
+FM_VERSION=$(shell grep Version: Esm/opa-fm.spec | cut -f2 -d:)
+FM_RELEASE=$(shell grep Release: Esm/opa-fm.spec | cut -f2 -d: | cut -f1 -d% | sed 's/ //')
+
+%:
+	dh $@ --parallel --with=systemd
+
+override_dh_auto_clean:
+
+override_dh_autoconfigure:
+
+override_dh_auto_build:
+	cd Esm && ./fmbuild -V $(FM_VERSION).$(FM_RELEASE)
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	BUILDDIR= DESTDIR=$(CURDIR)/debian/opa-fm RPM_INS=n ./Esm/fm_install.sh
+	mv $(CURDIR)/debian/opa-fm/usr/lib/systemd/system/opafm.service $(CURDIR)/debian/opa-fm.opafm.service
+	chmod a-x ./debian/opa-fm/usr/share/opa-fm/opafm_src.xml
+	dh_auto_install
+
+override_dh_systemd_enable:
+	dh_systemd_enable --no-enable -popa-fm --name opafm opafm.service
+
+override_dh_systemd_start:
+	dh_systemd_start --no-start -popa-fm opafm.service
+
+override_dh_strip:
+	dh_strip --dbg-package=opa-fm-dbg
+
+override_dh_installdocs:
+	dh_installdocs --link-doc=opa-fm

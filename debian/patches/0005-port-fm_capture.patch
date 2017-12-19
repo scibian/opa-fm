@@ -1,0 +1,35 @@
+Description: Port sm_capture.sh to Debian
+ Use dpkg-query to determine package version. Use base instead of sh.
+ .
+ opa-fm (10.5.1.0-1-2ifs) UNRELEASED; urgency=medium
+ .
+   * Ported functionality of comp_qlgc_fm.pl required by opaconfig to Debian.
+   * Ported sm_capture.sh to Debian. This is installed as fm_capture.
+
+Author: Brian T. Smith <bsmith@systemfabricworks.com>
+Copyright: 2017 System Fabric Works, Inc. All Rights Reserved.
+Forwarded: no
+Last-Update: <2017-10-11>
+
+---
+
+--- a/Esm/ib/src/linux/startup/sm_capture.sh
++++ b/Esm/ib/src/linux/startup/sm_capture.sh
+@@ -1,4 +1,4 @@
+-#!/bin/sh
++#!/bin/bash
+ # BEGIN_ICS_COPYRIGHT8 ****************************************
+ #
+ # Copyright (c) 2015, Intel Corporation
+@@ -119,7 +119,11 @@
+ fi
+ 
+ echo "Getting FM rpm version..."
++if [ -f /etc/debian_version ] ; then
++	dpkg-query -W --showformat '${db:Status-Abbrev} ${Package} {$Version}' | egrep 'opa-fm' > $dumpLocation/version
++else
+ rpm -qa|egrep 'opa-fm' > $dumpLocation/version
++fi
+ 
+ echo "Copying FM configuration..."
+ cp $CONFIG_FILE $dumpLocation
