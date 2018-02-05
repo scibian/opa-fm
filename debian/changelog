@@ -1,9 +1,16 @@
-opa-fm (10.5.1.0-1-2ifs+c9u1) calibre9; urgency=medium
+opa-fm (10.6.1.0-2-2ifs+deb9) UNRELEASED; urgency=medium
 
-  * Build for Calibre9
-  * Add a debian/gbp.conf file
+  * Branch for stretch.
 
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 19 Dec 2017 16:46:00 +0100
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 05 Feb 2018 13:32:43 -0600
+
+opa-fm (10.6.1.0-2-1ifs) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.6.1.0-2 from IFS RHEL72 10.6.1.0.2 upstream.
+  * Use git packaging and pristine-tar.
+  * Refresh patches and modify to address porting issues in latest version.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 18 Dec 2017 17:54:54 -0600
 
 opa-fm (10.5.1.0-1-2ifs) UNRELEASED; urgency=medium
 

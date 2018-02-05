@@ -10,9 +10,15 @@ fi
 
 if [ "$id" = "rhel" ]
 then
-	sed -i "s/__RPM_BLDRQ1/expat-devel, libibumad-devel, libibverbs-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
-	st=$(echo "$versionid >= 7.0" | bc)
-	if [ $st = 1 ]
+	GE_7_0=$(echo "$versionid >= 7.0" | bc)
+	GE_7_4=$(echo "$versionid >= 7.4" | bc)
+	if [ $GE_7_4 = 1 ]
+	then
+		sed -i "s/__RPM_BLDRQ1/expat-devel, rdma-core-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
+	else
+		sed -i "s/__RPM_BLDRQ1/expat-devel, libibumad-devel, libibverbs-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
+	fi
+	if [ $GE_7_0 = 1 ]
 	then
 		sed -i "s/__RPM_BLDRQ2/BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}/g" opa-fm.spec
 		sed -i "s/__RPM_RQ1/Requires: systemd %{?systemd_requires}/g" opa-fm.spec
@@ -27,9 +33,16 @@ then
 	sed -i "/__RPM_DEBUG/,+1d" opa-fm.spec
 elif [ "$id" = "sles" ]
 then
-	sed -i "s/__RPM_BLDRQ1/libexpat-devel, libibumad-devel, libibverbs-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
-	st=$(echo "$versionid >= 12.1" | bc)
-	if [ $st = 1 ]
+	GE_11_1=$(echo "$versionid >= 11.1" | bc)
+	GE_12_1=$(echo "$versionid >= 12.1" | bc)
+	GE_12_3=$(echo "$versionid >= 12.3" | bc)
+	if [ $GE_12_3 = 1 ]
+	then
+		sed -i "s/__RPM_BLDRQ1/libexpat-devel, rdma-core-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
+	else
+		sed -i "s/__RPM_BLDRQ1/libexpat-devel, libibumad-devel, libibverbs-devel, libibmad-devel, openssl-devel/g" opa-fm.spec
+	fi
+	if [ $GE_12_1 = 1 ]
 	then
 		sed -i "s/__RPM_BLDRQ2/BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}/g" opa-fm.spec
 		sed -i "s/__RPM_RQ1/Requires: systemd %{?systemd_requires}/g" opa-fm.spec
@@ -37,8 +50,7 @@ then
 		sed -i "s/__RPM_BLDRQ2/Requires(post): /sbin/chkconfig/g" opa-fm.spec
 		sed -i "s/__RPM_RQ1/Requires(preun): /sbin/chkconfig/g" opa-fm.spec
 	fi
-	st=$(echo "$versionid >= 11.1" | bc)
-	if [ $st = 1 ]
+	if [ $GE_11_1 = 1 ]
 	then
 		sed -i "s/__RPM_DEBUG/%debug_package/g" opa-fm.spec
 	else

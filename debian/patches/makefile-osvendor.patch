@@ -1,0 +1,39 @@
+Description: Add Makefile detection of Debian
+ Implement detection of the Debian release within Makefile. Set appropriate
+ environment variables.
+Author: Brian T. Smith <bsmith@systemfabricworks.com>
+Forwarded: no
+Last-Update: <2017-11-20>
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/MakeTools/funcs-ext.sh
++++ b/MakeTools/funcs-ext.sh
+@@ -709,6 +709,9 @@
+     then
+         # Apple Mac
+         rval=apple
++	elif [ -f /etc/debian_version ]
++	then
++		rval=debian
+     else
+         filelist=($('ls' /etc/*-release | egrep -v lsb | egrep -v os))
+         rval=""
+@@ -822,6 +825,9 @@
+ 			rval=`grep -i SuSE /etc/SuSE-release | cut -d' ' -f3`
+ 		fi
+ 		;;
++	debian)
++		rval=`cat /etc/debian_version`
++		;;
+ 	turbolinux)
+ 		rval=`cat /etc/turbolinux-release | cut -d' ' -f3`
+ 		;;
+@@ -848,6 +854,8 @@
+ 		ver=RH$(echo $BUILD_TARGET_OS_VENDOR_VERSION|sed -e 's/ES/EL/' -e 's/\..*//');;
+ 	SuSE)
+ 		ver=SL$(echo $BUILD_TARGET_OS_VENDOR_VERSION|sed -e 's/\..*//');;
++	debian)
++		ver=DEBIAN$(echo $BUILD_TARGET_OS_VENDOR_VERSION|sed -e 's/ES//' );;
+ 	*)
+ 		ver="$BUILD_TARGET_OS_VENDOR.$BUILD_TARGET_OS_VENDOR_VERSION"''
+ 	esac
