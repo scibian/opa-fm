@@ -64,7 +64,7 @@ Fabric Executive, and some fabric management tools.
 
 %build
 cd Esm
-./fmbuild -V %{version}.%{release}
+./fmbuild $BUILD_ARGS
 
 %install
 BUILDDIR=%{_builddir} DESTDIR=%{buildroot} LIBDIR=%{_libdir} RPM_INS=n ./Esm/fm_install.sh
