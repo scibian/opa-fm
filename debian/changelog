@@ -1,3 +1,9 @@
+opa-fm (10.6.1.0-2-2ifs+deb9sci9+opa10.6u1) scibian9+opa10.6; urgency=medium
+
+  * Scibian9+OPA10.6 Release.
+
+ -- Thomas Hamel <thomas-externe.hamel@edf.fr>  Thu, 19 Apr 2018 14:45:42 +0200
+
 opa-fm (10.6.1.0-2-2ifs+deb9) UNRELEASED; urgency=medium
 
   * Branch for stretch.
