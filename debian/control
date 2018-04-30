@@ -16,7 +16,7 @@ Build-Depends: debhelper (>= 10),
                zlib1g-dev,
 
 Package: opa-fm
-Architecture: linux-any
+Architecture: amd64
 Depends: pciutils,
          systemd,
          ${misc:Depends},
