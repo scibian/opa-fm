@@ -1,3 +1,9 @@
+opa-fm (10.7.0.0-141-1ifs+deb9) UNRELEASED; urgency=medium
+
+  * Import opa-fm 10.7.0.0-141 from IFS RHEL74 10.7.0.0.145 upstream.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Sat, 23 Jun 2018 13:37:11 -0500
+
 opa-fm (10.6.1.0-2-2ifs+deb9) UNRELEASED; urgency=medium
 
   * Branch for stretch.

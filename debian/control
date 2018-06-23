@@ -17,6 +17,7 @@ Package: opa-fm
 Architecture: linux-any
 Depends: pciutils,
          systemd,
+         ${perl:Depends},
          ${misc:Depends},
          ${shlibs:Depends},
 Conflicts: opensm,
@@ -24,4 +25,3 @@ Description: Intel Omni-Path Fabric Management Software
  The opa-fm contains Intel Omni-Path fabric management applications.
  This includes: the Subnet Manager, Baseboard Manager, Performance Manager,
  Fabric Executive, and some fabric management tools.
-
