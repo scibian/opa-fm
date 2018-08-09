@@ -2,7 +2,7 @@ Description: Port sm_capture.sh to Debian
  Use dpkg-query to determine package version. Use base instead of sh.
 Author: Brian T. Smith <bsmith@systemfabricworks.com>=
 Forwarded: no
-Last-Update: <2017-11-20>
+Last-Update: <2018-06-23>
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/Esm/ib/src/linux/startup/sm_capture.sh
@@ -11,8 +11,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -#!/bin/sh
 +#!/bin/bash
  # BEGIN_ICS_COPYRIGHT8 ****************************************
- #
- # Copyright (c) 2015, Intel Corporation
+ # 
+ # Copyright (c) 2015-2017, Intel Corporation
 @@ -119,7 +119,11 @@
  fi
  
