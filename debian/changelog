@@ -1,3 +1,9 @@
+opa-fm (10.7.0.0-141-1ifs+deb9sci9+opa10.7u1) scibian9+opa10.7; urgency=medium
+
+  * Scibian9+opa111111111110.7 Release.
+
+ -- Nicolas Meaux <nicolas-externe.meaux@edf.fr>  Thu, 09 Aug 2018 17:25:07 +0200
+
 opa-fm (10.7.0.0-141-1ifs+deb9) UNRELEASED; urgency=medium
 
   * Import opa-fm 10.7.0.0-141 from IFS RHEL74 10.7.0.0.145 upstream.
