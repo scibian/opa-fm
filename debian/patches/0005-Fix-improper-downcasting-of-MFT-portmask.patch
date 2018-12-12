@@ -1,0 +1,26 @@
+From: Thomas Hamel <thomas-externe.hamel@edf.fr>
+Date: Wed, 12 Dec 2018 18:29:47 +0100
+Subject: Fix improper downcasting of MFT portmask
+
+Recommended by Intel, upstream patch for 10.8 :
+
+https://github.com/intel/opa-fm/commit/38c90b085eab2ccfc90c3b05e2f38993d2cde5a3
+
+(patch provided by Intel)
+---
+ Esm/ib/src/smi/sm/sm_multicast.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Esm/ib/src/smi/sm/sm_multicast.c b/Esm/ib/src/smi/sm/sm_multicast.c
+index dd22ac0..0d14f8c 100755
+--- a/Esm/ib/src/smi/sm/sm_multicast.c
++++ b/Esm/ib/src/smi/sm/sm_multicast.c
+@@ -1192,7 +1192,7 @@ Status_t sm_set_all_mft(int force, Topology_t *curr_tp, Topology_t *prev_tp)
+ 	uint32_t		amod;
+     uint64_t        sTime, eTime;
+ 	int             dispatched = 0, mftBlockChange = 0;
+-	uint16_t		old_portMask = 0;
++	STL_PORTMASK	old_portMask = 0;
+ 
+     if (smDebugPerf) {
+         vs_time_get(&sTime);

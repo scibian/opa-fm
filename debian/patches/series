@@ -2,3 +2,4 @@ makefile-osvendor.patch
 fix-manpage-errors.patch
 port-fm_capture.patch
 0004-Fix-for-nodes-dropping-off-from-IPoIB-mcast-group.patch
+0005-Fix-improper-downcasting-of-MFT-portmask.patch
