@@ -17,7 +17,6 @@ Package: opa-fm
 Architecture: linux-any
 Depends: pciutils,
          systemd,
-         ${perl:Depends},
          ${misc:Depends},
          ${shlibs:Depends},
 Conflicts: opensm,

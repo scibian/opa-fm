@@ -1,3 +1,4 @@
 makefile-osvendor.patch
 fix-manpage-errors.patch
 port-fm_capture.patch
+prevent_portinfo_timeouts.patch

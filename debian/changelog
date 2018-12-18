@@ -1,16 +1,30 @@
-opa-fm (10.7.0.0-141-1ifs+deb9) UNRELEASED; urgency=medium
+opa-fm (10.8.0.1-1-1ifs+deb9) stretch; urgency=medium
+
+  * Import opa-fm 10.8.0.1-1 from IFS RHEL75 10.8.0.1.2 upstream.
+  * Add upstream patch 86d2a898 - Prevent Get(Portinfo) timeouts.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Tue, 18 Dec 2018 13:48:31 -0600
+
+opa-fm (10.8.0.0-202-1ifs+deb9) stretch; urgency=medium
+
+  * Import opa-fm 10.8.0.0-202 from IFS RHEL75 10.8.0.0.204 upstream.
+  * d/copyright amended to remove GPLv2.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 26 Oct 2018 10:42:32 -0500
+
+opa-fm (10.7.0.0-141-1ifs+deb9) stretch; urgency=medium
 
   * Import opa-fm 10.7.0.0-141 from IFS RHEL74 10.7.0.0.145 upstream.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Sat, 23 Jun 2018 13:37:11 -0500
 
-opa-fm (10.6.1.0-2-2ifs+deb9) UNRELEASED; urgency=medium
+opa-fm (10.6.1.0-2-2ifs+deb9) stretch; urgency=medium
 
   * Branch for stretch.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 05 Feb 2018 13:32:43 -0600
 
-opa-fm (10.6.1.0-2-1ifs) UNRELEASED; urgency=medium
+opa-fm (10.6.1.0-2-1ifs) jessie; urgency=medium
 
   * Import opa-fm 10.6.1.0-2 from IFS RHEL72 10.6.1.0.2 upstream.
   * Use git packaging and pristine-tar.
@@ -18,7 +32,7 @@ opa-fm (10.6.1.0-2-1ifs) UNRELEASED; urgency=medium
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 18 Dec 2017 17:54:54 -0600
 
-opa-fm (10.5.1.0-1-2ifs) UNRELEASED; urgency=medium
+opa-fm (10.5.1.0-1-2ifs) jessie; urgency=medium
 
   * Ported functionality of comp_qlgc_fm.pl required by opaconfig to Debian.
   * Ported sm_capture.sh to Debian. This is installed as fm_capture.
@@ -26,7 +40,7 @@ opa-fm (10.5.1.0-1-2ifs) UNRELEASED; urgency=medium
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 11 Oct 2017 14:11:11 -0500
 
-opa-fm (10.5.1.0-1-1ifs) UNRELEASED; urgency=medium
+opa-fm (10.5.1.0-1-1ifs) jessie; urgency=medium
 
   * Import opa-fm 10.5.1.0-1 from IFS 10.5.1.0.2 upstream.
   * Patched manpages to correct lintian complaints.
@@ -35,51 +49,51 @@ opa-fm (10.5.1.0-1-1ifs) UNRELEASED; urgency=medium
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 22 Sep 2017 11:39:38 -0500
 
-opa-fm (10.4.1.0-1-1ifs) UNRELEASED; urgency=medium
+opa-fm (10.4.1.0-1-1ifs) jessie; urgency=medium
 
   * Import opa-fm 10.4.1.0-1 from IFS 10.4.2.0.7 upstream.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 13 Jul 2017 14:31:56 -0500
 
-opa-fm (10.3.1.0-5-2ifs) UNRELEASED; urgency=medium
+opa-fm (10.3.1.0-5-2ifs) jessie; urgency=medium
 
   * Changed libibmad dependency to libibmad5.
   * Patched to build on stretch.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 19 Jun 2017 15:47:46 -0500
 
-opa-fm (10.3.1.0-5-1ifs) UNRELEASED; urgency=medium
+opa-fm (10.3.1.0-5-1ifs) jessie; urgency=medium
 
   * Convert to quilt format. Corrected version.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Fri, 09 Jun 2017 15:38:51 -0500
 
-opa-fm (10.3.1.0.5) UNRELEASED; urgency=medium
+opa-fm (10.3.1.0.5) jessie; urgency=medium
 
   * Import opa-fm 10.3.1.0-5 from upstream IFS 10.3.1.0.19.
   * Create /var/crash during installation.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 01 Feb 2017 13:51:35 -0600
 
-opa-fm (10.3.0.0.67) UNRELEASED; urgency=medium
+opa-fm (10.3.0.0.67) jessie; urgency=medium
 
   * Import opa-fm 10.3.0.0-67 from upstream IFS 10.3.0.0.81.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 05 Jan 2017 16:11:35 -0600
 
-opa-fm (10.2.0.0.151) UNRELEASED; urgency=medium
+opa-fm (10.2.0.0.151) jessie; urgency=medium
 
   * Import opa-fm 10.2.0.0-151 from upstream IFS 10.2.0.0.158.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 03 Oct 2016 18:18:35 -0500
 
-opa-fm (10.1.1.0) UNRELEASED; urgency=medium
+opa-fm (10.1.1.0) jessie; urgency=medium
 
   * Import opa-fm 10.1.1.0-6 from upstream IFS 10.1.1.0.9.
 
  -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 27 Jul 2016 12:29:35 -0500
 
-opa-fm (10.1.0.0) UNRELEASED; urgency=medium
+opa-fm (10.1.0.0) jessie; urgency=medium
 
   * Import opa-fm 10.1.0.0-145 from upstream IFS 10.1.0.0.145
 
