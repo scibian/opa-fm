@@ -1,6 +1,6 @@
  /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -188,9 +188,10 @@ vs_log_output(uint32_t sev, /* severity */
 	va_end (args);
 	buffer[sizeof(buffer)-1] = '\0';
 
-	if (vf)
-		sprintf(vfstr, "[VF:%s] ", vf);
-	else
+	if (vf) {
+		snprintf(vfstr, sizeof(vfstr), "[VF:%s] ", vf);
+		vfstr[sizeof(vfstr)-1] = '\0';
+	} else
 		*vfstr='\0';
 
 	fprintf(stderr, "%s: %s%s%s%s\n",
@@ -275,8 +276,8 @@ void hexout(uint8_t *cmd, int cc) {
 	tcnt = 0;
 	fprintf(stderr, "-----------------\n");
 	while(cc) {
-		cs_strlcpy(astr, "[................]", sizeof(hstr));
-		cs_strlcpy(hstr, "", sizeof(astr));
+		StringCopy(astr, "[................]", sizeof(hstr));
+		StringCopy(hstr, "", sizeof(astr));
 		
 		j = 0;
 		for(i=0;i<16 && cc>0;i++){

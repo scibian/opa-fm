@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -66,9 +66,8 @@ extern	STL_CLASS_PORT_INFO	saClassPortInfo;
 
 Status_t
 sa_ClassPortInfo(Mai_t *maip, sa_cntxt_t* sa_cntxt) {
-
 	uint16_t				attribOffset;
-        union {
+	union {
 		STL_CLASS_PORT_INFO		stl_version;
 		IB_CLASS_PORT_INFO		ib_version;
 	} myCPI;
@@ -84,8 +83,8 @@ sa_ClassPortInfo(Mai_t *maip, sa_cntxt_t* sa_cntxt) {
 			memset(&myCPI.ib_version,0,sizeof(IB_CLASS_PORT_INFO));
 			myCPI.ib_version.BaseVersion = saClassPortInfo.BaseVersion;
 			myCPI.ib_version.ClassVersion = saClassPortInfo.ClassVersion;
-			myCPI.ib_version.CapMask = saClassPortInfo.CapMask;
-			myCPI.ib_version.u1.s.CapMask2 = saClassPortInfo.u1.s.CapMask2;
+			myCPI.ib_version.CapMask = IB_SA_CAPABILITY_MASK(saClassPortInfo.CapMask);
+			myCPI.ib_version.u1.s.CapMask2 = IB_SA_CAPABILITY2_MASK(saClassPortInfo.u1.s.CapMask2);
 			myCPI.ib_version.u1.s.RespTimeValue = saClassPortInfo.u1.s.RespTimeValue;
 			myCPI.ib_version.u3.s.RedirectQP = saClassPortInfo.u3.s.RedirectQP;
 			myCPI.ib_version.u5.s.TrapHopLimit = saClassPortInfo.u5.s.TrapHopLimit;
@@ -106,7 +105,7 @@ sa_ClassPortInfo(Mai_t *maip, sa_cntxt_t* sa_cntxt) {
 
 			sa_cntxt_data( sa_cntxt, &myCPI.stl_version, attribOffset);
 			sa_cntxt->attribLen = attribOffset;
-		maip->base.status = MAD_STATUS_OK;
+			maip->base.status = MAD_STATUS_OK;
 		} else {
 			IB_LOG_WARN_FMT(__func__, "invalid Base and/or Class Versions: Base %u, Class %u",
 				maip->base.bversion, maip->base.cversion);

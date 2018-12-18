@@ -1,12 +1,10 @@
 Source: opa-fm
-Maintainer: Scibian Project <packaging@scibian.org>
+Maintainer: Brian T. Smith <bsmith@systemfabricworks.com>
 Section: net
 Priority: extra
-Standards-Version: 3.9.8
+Standards-Version: 3.9.6
 Homepage: http://www.intel.com
-Vcs-Git: https://github.com/scibian/opa-fm.git
-Vcs-Browser: https://github.com/scibian/opa-fm
-Build-Depends: debhelper (>= 10),
+Build-Depends: debhelper (>= 9),
                dh-systemd,
                libexpat-dev,
                libibmad-dev,
@@ -16,7 +14,7 @@ Build-Depends: debhelper (>= 10),
                zlib1g-dev,
 
 Package: opa-fm
-Architecture: amd64
+Architecture: linux-any
 Depends: pciutils,
          systemd,
          ${misc:Depends},
@@ -27,3 +25,12 @@ Description: Intel Omni-Path Fabric Management Software
  This includes: the Subnet Manager, Baseboard Manager, Performance Manager,
  Fabric Executive, and some fabric management tools.
 
+Package: opa-fm-dbg
+Architecture: linux-any
+Section: debug
+Depends: opa-fm (=${binary:Version}),
+         ${misc:Depends},
+Description: Debug information for package opa-fm
+ This package provides debug information for package opa-fm.
+ Debug information is useful when developing applications that use this
+ package or when debugging this package.

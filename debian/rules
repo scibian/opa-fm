@@ -9,6 +9,7 @@ override_dh_auto_configure:
 
 override_dh_auto_build:
 	cd Esm && ./fmbuild
+
 override_dh_auto_test:
 
 override_dh_auto_install:
@@ -22,6 +23,9 @@ override_dh_systemd_enable:
 
 override_dh_systemd_start:
 	dh_systemd_start --no-start -popa-fm opafm.service
+
+override_dh_strip:
+	dh_strip --dbg-package=opa-fm-dbg
 
 override_dh_installdocs:
 	dh_installdocs --link-doc=opa-fm

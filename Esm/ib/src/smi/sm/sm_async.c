@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -83,7 +83,7 @@ extern  int      sm_sa_getNoticeCount (STL_NOTICE * noticep);
 #ifdef __VXWORKS__
 extern  uint32_t sm_trapThreshold;
 extern  uint8_t  sa_dynamicPlt[];
-extern  uint32_t sm_mcast_mlid_table_cap;
+extern  STL_LID sm_mcast_mlid_table_cap;
 
 char    pkey_description[100];
 #endif
@@ -160,12 +160,11 @@ async_main(uint32_t argc, uint8_t ** argv) {
 	Filter_t	filter;
 	Mai_t		mad;
     uint64_t	lastTimeAged=0, timeout=0;
-    uint64_t    lastTimeDiscoveryRequested=0;
     uint32_t    index = 99;
     IBhandle_t  handles[2];
 	int			lastState;
     uint64_t    lastTimePortChecked=0;
-	uint8_t		path[64], localPortFailure=0;
+	uint8_t		localPortFailure=0;
 	STL_PORT_INFO	portInfo;
 
 	IB_ENTER(__func__, 0, 0, 0, 0);
@@ -493,8 +492,10 @@ async_main(uint32_t argc, uint8_t ** argv) {
 		/* First time we come here, we will always check port state as lastTimePortChecked will be 0*/
 		if ((sm_state == SM_STATE_MASTER) && !smFabricDiscoveryNeeded && !isSweeping && 
 			((now - lastTimePortChecked) > (VTIMER_1S * 2))) {
+			uint8 path[64];
 			memset((void *)path, 0, 64);
-			status = SM_Get_PortInfo(fd_sminfo, 1<<24, path, &portInfo);
+			SmpAddr_t addr = SMP_ADDR_CREATE_DR(path);
+			status = SM_Get_PortInfo(fd_sminfo, 1<<24, &addr, &portInfo);
 			if (status != VSTATUS_OK) {
 				IB_LOG_ERRORRC("can't get SM port PortInfo rc:", status);
 			} else {
@@ -507,17 +508,20 @@ async_main(uint32_t argc, uint8_t ** argv) {
 		}
         if (smFabricDiscoveryNeeded && lastTimeDiscoveryRequested == 0) {
             lastTimeDiscoveryRequested = now;
-        } else if (smFabricDiscoveryNeeded && (now - lastTimeDiscoveryRequested) > VTIMER_1S) {
-			// At this point discovery needed due to multiple traps (re-sweep reason already
-			// set); or local port failure.
-			if (localPortFailure) {
-				localPortFailure = 0;
-				setResweepReason(SM_SWEEP_REASON_LOCAL_PORT_FAIL);
-			}
-            topology_wakeup_time = now;
-            /* clear the indicators */
-            lastTimeDiscoveryRequested = 0;
-            smFabricDiscoveryNeeded = 0;
+        } else if (smFabricDiscoveryNeeded) {
+            uint64_t time_interval = VTIMER_1S;
+
+            if (sm_resweep_reason == SM_SWEEP_REASON_TRAP_EVENT) time_interval *= sm_config.trap_hold_down;
+
+            if ((now - lastTimeDiscoveryRequested) > time_interval) {
+				// At this point discovery needed due to multiple traps (re-sweep reason already
+				// set); or local port failure.
+				if (localPortFailure) {
+					localPortFailure = 0;
+					setResweepReason(SM_SWEEP_REASON_LOCAL_PORT_FAIL);
+				}
+                topology_wakeup_time = now;
+            }
         }
 
 		if (topology_wakeup_time > 0ull) {
@@ -591,7 +595,7 @@ int sm_send_xml_file(uint8_t activate) {
 
 	syncFile->version = DBSYNC_FILE_TRANSPORT_VERSION;
 	syncFile->length = sizeof(SMDBSyncFile_t);
-	cs_strlcpy(syncFile->name, "opafm.xml", SMDBSYNCFILE_NAME_LEN);
+	StringCopy(syncFile->name, "opafm.xml", SMDBSYNCFILE_NAME_LEN);
 	syncFile->type = DBSYNC_FILE_XML_CONFIG;
 	syncFile->activate = activate;
 
@@ -714,10 +718,6 @@ uint32_t sm_getMcastCheck(void) {
 	return sm_mc_config.disable_mcast_check;
 }
 
-uint32_t sm_getLidOffset(void) {
-	return sm_config.topo_lid_offset;
-}
-
 void acquireVfLock(void) {
 	(void)vs_rdlock(&old_topology_lock);
 }
@@ -731,7 +731,7 @@ uint32_t sm_numberOfVfs(void) {
 	VirtualFabrics_t* VirtualFabrics = old_topology.vfs_ptr;
 	if (VirtualFabrics == NULL)
 		return 0;
-	return VirtualFabrics->number_of_vfs;
+	return VirtualFabrics->number_of_vfs_all;
 }
 
 // virtual fabric name given index
@@ -739,11 +739,11 @@ char* sm_VfName(uint32_t index) {
 	VirtualFabrics_t* VirtualFabrics = old_topology.vfs_ptr;
 	if (VirtualFabrics == NULL)
 		return NULL;
-	if (VirtualFabrics->number_of_vfs == 0)
+	if (VirtualFabrics->number_of_vfs_all == 0)
 		return NULL;
-	if (index > VirtualFabrics->number_of_vfs - 1)
+	if (index >= VirtualFabrics->number_of_vfs_all)
 		return NULL;
-	return VirtualFabrics->v_fabric[index].name;
+	return VirtualFabrics->v_fabric_all[index].name; 
 }
 
 // number of multicast groups given virtual fabric name
@@ -758,14 +758,22 @@ uint32_t sm_numberOfVfMcastGroups(char* vfName) {
 uint32_t sm_getMibOptionFlags(void) {
 
 	uint32_t flags = 0;
+	VF_t *vfp = NULL;
 
 	(void)vs_rdlock(&old_topology_lock);
 	VirtualFabrics_t* VirtualFabrics = old_topology.vfs_ptr;
 
 	if (VirtualFabrics != NULL) {
+		int vf;
+		// find first active vf
+		for (vf = 0; vf < VirtualFabrics->number_of_vfs_all; vf++) {
+			if (VirtualFabrics->v_fabric_all[vf].standby) continue;
+			vfp = &VirtualFabrics->v_fabric_all[vf];
+		}
+
 		// get the SM_CREATE_MCGRP_MASK option flag
-		if (VirtualFabrics->number_of_vfs != 0 && VirtualFabrics->v_fabric[0].default_group != NULL) {
-			if (VirtualFabrics->v_fabric[0].default_group->def_mc_create)
+		if (VirtualFabrics->number_of_vfs_all != 0 && vfp->default_group != NULL) {
+			if (vfp->default_group->def_mc_create)
 				flags |= SM_CREATE_MCGRP_MASK;
 		}
 	}
@@ -797,7 +805,7 @@ char* sm_getMibPKeyDescription(char* vfName) {
 	VirtualFabrics_t* VirtualFabrics = old_topology.vfs_ptr;
 	VF_t* vf = findVfPointer(VirtualFabrics, vfName);
 	if (vf == NULL)
-		cs_strlcpy(pkey_description, "Default PKey", sizeof(pkey_description));
+		StringCopy(pkey_description, "Default PKey", sizeof(pkey_description));
 	else 
 		sprintf(pkey_description, "Virtual Fabric - %s", vf->name);
 	return pkey_description;

@@ -1,7 +1,7 @@
 #!/bin/bash
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -129,10 +129,10 @@ then
 -s *_LogMask -s Name -s PortGUID -s Sm.TrapLogSuppressTriggerInterval -s Sm.SmPerfDebug -s Sm.SaPerfDebug -s Sm.DebugDor -s Sm.DebugVf -s Sm.DebugJm -s Sm.DebugLidAssign -s Sm.LoopTestOn -s Sm.LoopTestPacket -s Sm.LID -s Sm.DynamicPortAlloc -s Sm.SaRmppChecksum -s Pm.ThresholdsExceededMsgLimit -s Pm.SweepErrorsLogThreshold -s Bm.DebugFlag -s Fe.TcpPort"
 fi
 
-$tooldir/opaxmlfilter -i 4 $filter_args $file1 > $TEMP1
+$tooldir/opafmxmlfilter -i 4 $filter_args $file1 > $TEMP1
 [ $? != 0 ] && exit 1
 
-$tooldir/opaxmlfilter -i 4 $filter_args $file2 > $TEMP2
+$tooldir/opafmxmlfilter -i 4 $filter_args $file2 > $TEMP2
 [ $? != 0 ] && exit 1
 
 diff $diff_args $TEMP1 $TEMP2

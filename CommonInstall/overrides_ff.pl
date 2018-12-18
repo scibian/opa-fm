@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -59,6 +59,6 @@ sub overrides()
 # main_omnipathwrap_delta.pl calls this, but since we don't have comp_delta.pl
 # we just provide a dummy function to keep PERL happy
 # TBD - move this to util_init.pl?
-sub init_delta_rpm_info($)
+sub init_delta_info($)
 {
 }

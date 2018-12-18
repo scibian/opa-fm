@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT2 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -75,10 +75,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IF3_SSL_IS_VALID_FN(d, f, b)   ((strlen(d) + strlen(f) + 1) < (sizeof(b) - 1))
 #define IF3_SSL_GET_FN(d, f, b) { \
     if (d[strlen(d)] == '/') \
-        sprintf(b, "%s%s", d, f); \
+        snprintf(b, sizeof(b), "%s%s", d, f); \
     else \
-        sprintf(b, "%s/%s", d, f); \
+        snprintf(b, sizeof(b), "%s/%s", d, f); \
 }
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10100000L) && !defined(__VXWORKS__)
+#define TLSv1_2_server_method() TLS_server_method()
+#define TLSv1_2_client_method() TLS_client_method()
+#endif
 
 static int g_if3_ssl_inited = 0;
 static Pool_t * g_if3_ssl_thread_pool = NULL;
@@ -135,6 +140,7 @@ static int if3_ssl_ctx_pem_password_cb(char *buf, int size, int rwflag, void *us
     return(len);
 }
 
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(__VXWORKS__)
 #if defined(__LINUX__) || (defined(__VXWORKS__) && !defined(OPENSSL_NO_ENGINE))
 static unsigned long if3_ssl_id_callback(void)
 {
@@ -162,6 +168,7 @@ static void if3_ssl_locking_callback(int mode, int type, const char *file, int l
     }
 #endif
 }
+#endif
 
 static Status_t if3_ssl_thread_setup(Pool_t *pool)
 {
@@ -209,10 +216,12 @@ static Status_t if3_ssl_thread_setup(Pool_t *pool)
         // set the callback routines that are used by OpenSSL to interface with
         // the mutexs
         if (!status) {
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(__VXWORKS__)
 #if defined(__LINUX__) || (defined(__VXWORKS__) && !defined(OPENSSL_NO_ENGINE))
             CRYPTO_set_id_callback(if3_ssl_id_callback);
 #endif
             CRYPTO_set_locking_callback(if3_ssl_locking_callback);
+#endif
         }
     }
     

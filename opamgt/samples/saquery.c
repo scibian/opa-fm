@@ -46,6 +46,7 @@ void Usage()
 	fprintf(stdout, "    slsc          - list of SL to SC mapping table records\n");
 	fprintf(stdout, "    scsl          - list of SC to SL mapping table records\n");
 	fprintf(stdout, "    scvlt         - list of SC to VLt table records\n");
+	fprintf(stdout, "    scvlr         - list of SC to VLr table records\n");
 	fprintf(stdout, "    scvlnt        - list of SC to VLnt table records\n");
 	fprintf(stdout, "    vlarb         - list of VL arbitration table records\n");
 	fprintf(stdout, "    pkey          - list of P-Key table records\n");
@@ -67,6 +68,10 @@ void Usage()
 	fprintf(stdout ,"    cableinfo     - list of Cable Info records\n");
 	fprintf(stdout ,"    portgroup     - list of AR Port Group records\n");
 	fprintf(stdout ,"    portgroupfdb  - list of AR Port Group FWD records\n");
+	fprintf(stdout ,"    dglist        - list of Device Group Names\n");
+	fprintf(stdout ,"    dgmember      - list of Device Group records\n");
+	fprintf(stdout ,"    dtree         - list of Device Tree records\n");
+	fprintf(stdout ,"    swcost        - list of switch cost records\n");
 	fprintf(stdout, "\n");
 	fprintf(stdout, "Usage examples:\n");
 	fprintf(stdout, "    saquery -o desc\n");
@@ -101,7 +106,7 @@ int main(int argc, char ** argv)
 	int exitcode = 0;
 	struct omgt_port * port = NULL;
 	int num_records = 0;
-	int i, c, index, debug = 0;
+	int c, index, debug = 0;
 	int sa_service_state = OMGT_SERVICE_STATE_UNKNOWN;
 	void *sa_records = NULL;
 	omgt_sa_selector_t selector;
@@ -276,8 +281,7 @@ int main(int argc, char ** argv)
 	} else if (!strcmp(type, "path")){
 		/* Valid Input Types:
 		 * 	NoInput, PortGuid, PortGid, PortGuidPair, GidPair, PathRecord,
-		 * 	PortGuidList, GidList, Lid, MultiPathRecord, PKey, SourceGid, SL,
-		 * 	ServiceId
+		 * 	Lid, PKey, SL, ServiceId
 		 *
 		 * 	SourceGid is not treated as an InputType but is ALWAYS required when querying path/trace records
 		 */
@@ -305,6 +309,18 @@ int main(int argc, char ** argv)
 		/* Valid Input Types: NoInput, PortGid */
 		status = omgt_sa_get_service_records(port, &selector, &num_records, (IB_SERVICE_RECORD **)&sa_records);
 	} else if (!strcmp(type, "mcmember")){
+		// must check if SA supports these records
+		omgt_sa_selector_t pre_select = {.InputType = InputTypeNoInput};
+		status = omgt_sa_get_classportinfo_records(port, &pre_select, &num_records, (STL_CLASS_PORT_INFO **)&sa_records);
+
+		if (OMGT_STATUS_SUCCESS != status || num_records != 1){
+			fprintf(stderr, "Failed to determine SA capabilities for mcmember query\n");
+			goto fail2;
+		}else if (! (((STL_CLASS_PORT_INFO **)&sa_records)[0]->CapMask & STL_SA_CAPABILITY_MULTICAST_SUPPORT )){
+			fprintf(stderr, "mcmember records not supported by SA\n");
+			goto fail2;
+		}
+
 		if (selector.InputType == InputTypeLid) selector.InputValue.IbMcMemberRecord.Lid = lid;
 		status = omgt_sa_get_ib_mcmember_records(port, &selector, &num_records, (IB_MCMEMBER_RECORD **)&sa_records);
 	} else if (!strcmp(type, "inform")){
@@ -312,17 +328,6 @@ int main(int argc, char ** argv)
 		if (selector.InputType == InputTypeLid) selector.InputValue.StlInformInfoRecord.SubscriberLID = lid;
 		status = omgt_sa_get_informinfo_records(port, &selector, &num_records, (STL_INFORM_INFO_RECORD **)&sa_records);
 	} else if (!strcmp(type, "trace")){
-		//must check if SA supports these records
-		omgt_sa_selector_t pre_select = {.InputType = InputTypeNoInput};
-		status = omgt_sa_get_classportinfo_records(port, &pre_select, &num_records, (STL_CLASS_PORT_INFO **)&sa_records);
-		if (OMGT_STATUS_SUCCESS != status || num_records != 1){
-			fprintf(stderr, "Failed to determine SA capabilities for trace query\n");
-			goto fail2;
-		}else if (! ((STL_CLASS_PORT_INFO **)&sa_records)[0]->CapMask && STL_SA_CAPABILITY_MULTIPATH_SUPPORT ){
-			fprintf(stderr, "trace records not supported by SA\n");
-			goto fail2;
-		}
-
 		/* Valid Input Types: PathRecord, PortGuid, GidPair, PortGid */
 		/* 	SourceGid is not treated as an InputType but is ALWAYS required when querying path/trace records */
 		if (selector.InputType == InputTypePortGuid) {
@@ -351,6 +356,10 @@ int main(int argc, char ** argv)
 		/* Valid Input Types: NoInput, Lid */
 		if (selector.InputType == InputTypeLid) selector.InputValue.ScVlxTableRecord.Lid = lid;
 		status = omgt_sa_get_scvlt_table_records(port, &selector, &num_records, (STL_SC2PVL_T_MAPPING_TABLE_RECORD **)&sa_records);
+	} else if (!strcmp(type, "scvlr")){
+		/* Valid Input Types: NoInput, Lid */
+		if (selector.InputType == InputTypeLid) selector.InputValue.ScVlxTableRecord.Lid = lid;
+		status = omgt_sa_get_scvlr_table_records(port, &selector, &num_records, (STL_SC2PVL_R_MAPPING_TABLE_RECORD **)&sa_records);
 	} else if (!strcmp(type, "scvlnt")){
 		/* Valid Input Types: NoInput, Lid */
 		if (selector.InputType == InputTypeLid) selector.InputValue.ScVlxTableRecord.Lid = lid;
@@ -379,7 +388,6 @@ int main(int argc, char ** argv)
 		/* Valid Input Types:
 		 * 	NoInput, PKey, SL, ServiceID, McGid, Index, NodeDesc
 		 */
-		if (selector.InputType == InputTypeLid) selector.InputValue.VfInfoRecord.Lid = lid;
 		status = omgt_sa_get_vfinfo_records(port, &selector, &num_records, (STL_VFINFO_RECORD **)&sa_records);
 	} else if (!strcmp(type, "fabricinfo")){
 		/* Valid Input Types: NoInput */
@@ -423,6 +431,22 @@ int main(int argc, char ** argv)
 		/* Valid Input Types: NoInput, Lid */
 		if (selector.InputType == InputTypeLid) selector.InputValue.PortGroupFwdRecord.Lid = lid;
 		status = omgt_sa_get_portgroupfwd_records(port, &selector, &num_records, (STL_PORT_GROUP_FORWARDING_TABLE_RECORD **)&sa_records);
+	} else if (!strcmp(type, "dglist")){
+		/* Valid Input Types: NoInput */
+		status = omgt_sa_get_devicegroupname_records(port, &selector, &num_records, (STL_DEVICE_GROUP_NAME_RECORD **)&sa_records);
+	} else if (!strcmp(type, "dgmember")){
+		/* Valid Input Types: NoInput, Lid, PortGuid, NodeDesc, DeviceGroup */
+		if (selector.InputType == InputTypeLid) selector.InputValue.DgGrpMemberRecord.Lid = lid;
+		if (selector.InputType == InputTypePortGuid) selector.InputValue.DgGrpMemberRecord.Guid = guid;
+		status = omgt_sa_get_devicegroupmember_records(port, &selector, &num_records, (STL_DEVICE_GROUP_MEMBER_RECORD **)&sa_records);
+	} else if (!strcmp(type, "dtree")){
+		/* Valid Input Types: NoInput, Lid */
+		if (selector.InputType == InputTypeLid) selector.InputValue.DgTreeMemberRecord.Lid = lid;
+		status = omgt_sa_get_devicetreemember_records(port, &selector, &num_records, (STL_DEVICE_TREE_MEMBER_RECORD **)&sa_records);
+	} else if (!strcmp(type, "swcost")){
+		/* Valid Input Types: NoInput, Lid */
+		if (selector.InputType == InputTypeLid) selector.InputValue.SwitchCostRecord.Lid = lid;
+		status = omgt_sa_get_switchcost_records(port, &selector, &num_records, (STL_SWITCH_COST_RECORD **)&sa_records);
 	}
 
 
