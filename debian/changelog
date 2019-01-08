@@ -1,3 +1,10 @@
+opa-fm (10.7.0.0-141-1ifs+deb9sci9+opa10.7u4) UNRELEASED; urgency=medium
+
+  * Add patch provided by Intel to prevent Get(Portinfo) timeouts due to large
+    trap traffic volume.
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 08 Jan 2019 13:39:23 +0100
+
 opa-fm (10.7.0.0-141-1ifs+deb9sci9+opa10.7u3) scibian9+opa10.7; urgency=medium
 
   * debian: Fix MFT downcasting patch
