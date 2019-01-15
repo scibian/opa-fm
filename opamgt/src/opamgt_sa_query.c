@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT2 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -1043,6 +1043,55 @@ exit:
 }
 
 /**
+ * @brief Query SA for SCVLr Table Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records. NULL == all records
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *								 Must be freed by calling omgt_free_query_result_buffer
+ *
+ *@return		   OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_scvlr_table_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_SC2PVL_R_MAPPING_TABLE_RECORD **records
+	)
+{
+
+	OMGT_STATUS_T status;
+	QUERY_RESULT_VALUES *query_result;
+	STL_SC2PVL_R_MAPPING_TABLE_RECORD_RESULTS *record_results = NULL;
+
+	status = omgt_sa_query_helper(port, selector, OutputTypeStlSCVLrTableRecord, &query_result);
+
+	if(OMGT_STATUS_SUCCESS != status)
+		return status;
+
+	record_results = (STL_SC2PVL_R_MAPPING_TABLE_RECORD_RESULTS*)query_result->QueryResult;
+	*num_records = record_results->NumSCVLrTableRecords;
+	if(*num_records == 0) {
+		*records = NULL;
+		goto exit;
+	}
+
+	int buf_size = sizeof(**records) * (*num_records);
+	*records = malloc(buf_size);
+	if(*records == NULL){
+		status = OMGT_STATUS_INSUFFICIENT_MEMORY;
+		goto exit;
+	}
+
+	memcpy(*records, record_results->SCVLrRecords, buf_size);
+exit:
+	omgt_free_query_result_buffer(query_result);
+	return status;
+}
+
+/**
  * @brief Query SA for SCVLnt Table Records
  *
  * @param port			 port opened by omgt_open_port_*
@@ -1286,6 +1335,7 @@ exit:
 	omgt_free_query_result_buffer(query_result);
 	return status;
 }
+
 
 /**
  * @brief Query SA for PKEY Table Records
@@ -1930,6 +1980,166 @@ exit:
 	omgt_free_query_result_buffer(query_result);
 	return status;
 }
+
+
+/**
+ * @brief Query SA for DeviceGroupName Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicegroupname_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_GROUP_NAME_RECORD **records
+	)
+{
+
+	OMGT_STATUS_T status;
+	QUERY_RESULT_VALUES *query_result;
+	STL_DEVICE_GROUP_NAME_RECORD_RESULTS *record_results = NULL;
+
+	status = omgt_sa_query_helper(port, selector, OutputTypeStlDeviceGroupNameRecord, &query_result);
+
+	if (OMGT_STATUS_SUCCESS != status)
+		return status;
+
+	record_results = (STL_DEVICE_GROUP_NAME_RECORD_RESULTS*)query_result->QueryResult;
+	*num_records = record_results->NumRecords;
+	if(*num_records == 0) {
+		*records = NULL;
+		goto exit;
+	}
+
+	int buf_size = sizeof(**records) * (*num_records);
+	*records = malloc(buf_size);
+	if(*records == NULL){
+		status = OMGT_STATUS_INSUFFICIENT_MEMORY;
+		goto exit;
+	}
+
+	memcpy(*records, record_results->Records, buf_size);
+
+exit:
+	omgt_free_query_result_buffer(query_result);
+	return status;
+}
+
+
+/**
+ * @brief Query SA for DeviceGroupMember Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput, Lid, PortGuid, NodeDesc, DeviceGroup
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicegroupmember_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_GROUP_MEMBER_RECORD **records
+	)
+{
+
+	OMGT_STATUS_T status;
+	QUERY_RESULT_VALUES *query_result;
+	STL_DEVICE_GROUP_MEMBER_RECORD_RESULTS *record_results = NULL;
+
+	status = omgt_sa_query_helper(port, selector, OutputTypeStlDeviceGroupMemberRecord, &query_result);
+
+	if (OMGT_STATUS_SUCCESS != status)
+		return status;
+
+	record_results = (STL_DEVICE_GROUP_MEMBER_RECORD_RESULTS*)query_result->QueryResult;
+	*num_records = record_results->NumRecords;
+	if(*num_records == 0) {
+		*records = NULL;
+		goto exit;
+	}
+
+	int buf_size = sizeof(**records) * (*num_records);
+	*records = malloc(buf_size);
+	if(*records == NULL){
+		status = OMGT_STATUS_INSUFFICIENT_MEMORY;
+		goto exit;
+	}
+
+	memcpy(*records, record_results->Records, buf_size);
+
+exit:
+	omgt_free_query_result_buffer(query_result);
+	return status;
+}
+
+
+/**
+ * @brief Query SA for DeviceTreeMember Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput, Lid
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicetreemember_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_TREE_MEMBER_RECORD **records
+	)
+{
+
+	OMGT_STATUS_T status;
+	QUERY_RESULT_VALUES *query_result;
+	STL_DEVICE_TREE_MEMBER_RECORD_RESULTS *record_results = NULL;
+
+	status = omgt_sa_query_helper(port, selector, OutputTypeStlDeviceTreeMemberRecord, &query_result);
+
+	if (OMGT_STATUS_SUCCESS != status)
+		return status;
+
+	record_results = (STL_DEVICE_TREE_MEMBER_RECORD_RESULTS*)query_result->QueryResult;
+	*num_records = record_results->NumRecords;
+	if(*num_records == 0) {
+		*records = NULL;
+		goto exit;
+	}
+
+	int buf_size = sizeof(**records) * (*num_records);
+	*records = malloc(buf_size);
+	if(*records == NULL){
+		status = OMGT_STATUS_INSUFFICIENT_MEMORY;
+		goto exit;
+	}
+
+	memcpy(*records, record_results->Records, buf_size);
+
+exit:
+	omgt_free_query_result_buffer(query_result);
+	return status;
+}
+
 
 /**
  * @brief Query SA for SwitchCost Records

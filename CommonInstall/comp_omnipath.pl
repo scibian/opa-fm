@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -46,7 +46,11 @@ sub install_generic_mpi
     my $installing_list = $_[1];
     my $mpiname = $_[2];
     my $compiler = $_[3];
-    my $mpifullname = "$mpiname"."_$compiler"."_hfi";
+    my $suffix = $_[4];
+    my $mpifullname = "$mpiname"."_$compiler";
+    if ( "$suffix" ne "") {
+        $mpifullname = "$mpifullname" . "_" . "$suffix";
+    }
     my $srcdir = $ComponentInfo{$mpifullname}{'SrcDir'};
     my $version = eval "media_version_$mpifullname()";
     
@@ -55,11 +59,16 @@ sub install_generic_mpi
     # make sure any old potentially custom built versions of mpi are uninstalled
     my @list = ( "$mpifullname", "mpitests_$mpifullname" );
     rpm_uninstall_list2("any", "--nodeps", 'silent', @list);
+	# cleanup from older installs just in case
+    system ("rm -rf $ROOT/usr/lib/opa/.comp_$mpifullname.pl");
     
-    my $rpmfile = rpm_resolve("$srcdir", "any", "$mpifullname");
+    my $rpmfile = rpm_resolve("$srcdir/$mpifullname", "any");
     if ( "$rpmfile" ne "" && -e "$rpmfile" ) {
 	my $mpich_prefix= "/usr/mpi/$compiler/$mpiname-"
-	    . rpm_query_attr($rpmfile, "VERSION") . "-hfi";
+	    . rpm_query_attr($rpmfile, "VERSION");
+    if ( "$suffix" ne "") {
+        $mpich_prefix= "$mpich_prefix" . "-" . "$suffix";
+    }
 	if ( -d "$mpich_prefix" ) {
 	    if (GetYesNo ("Remove $mpich_prefix directory?", "y")) {
 		LogPrint "rm -rf $mpich_prefix\n";
@@ -68,15 +77,13 @@ sub install_generic_mpi
 	}
     }
     # enable this code if mpitests is missing for some compilers or MPIs
-    #my $mpitests_rpmfile = rpm_resolve("$srcdir/OtherMPIs", "any", "mpitests_$mpifullname");
+    #my $mpitests_rpmfile = rpm_resolve("$srcdir/OtherMPIs/mpitests_$mpifullname", "any");
     #if ( "$mpitests_rpmfile" ne "" && -e "$mpitests_rpmfile" ) {
         rpm_install_list_with_options ("$srcdir", "user", " -U --nodeps ", @list);
     #} else {
-    #    rpm_install("$srcdir/OtherMPIs", "user", "$mpifullname");
+    #    rpm_install("$srcdir/OtherMPIs/$mpifullname", "user");
     #}
-    check_dir ("/opt/iba");
-    copy_systool_file ("$srcdir/comp.pl", "/usr/lib/opa/.comp_$mpifullname.pl");
-    
+
     $ComponentWasInstalled{$mpifullname} = 1;
 }
 
@@ -84,10 +91,13 @@ sub installed_generic_mpi
 {
     my $mpiname = $_[0];
     my $compiler = $_[1];
-    my $mpifullname = "$mpiname"."_$compiler"."_hfi";
+    my $suffix = $_[2];
+    my $mpifullname = "$mpiname"."_$compiler";
+    if ( "$suffix" ne "") {
+        $mpifullname = "$mpifullname" . "_" . "$suffix";
+    }
 
-    return ( -e "$ROOT/usr/lib/opa/.comp_$mpifullname.pl"
-		   	|| rpm_is_installed ($mpifullname, "user") );
+    return (rpm_is_installed ($mpifullname, "user") );
 }
 
 sub uninstall_generic_mpi
@@ -96,36 +106,47 @@ sub uninstall_generic_mpi
     my $installing_list = $_[1];
     my $mpiname = $_[2];
     my $compiler = $_[3];
-    my $mpifullname = "$mpiname"."_$compiler"."_hfi";
+    my $suffix = $_[4];
+    my $mpifullname = "$mpiname"."_$compiler";
+    if ( "$suffix" ne "") {
+        $mpifullname = "$mpifullname" . "_" . "$suffix";
+    }
+    my $mpich_prefix= "/usr/mpi/$compiler/$mpiname-"
+        . rpm_query_attr_pkg("$mpifullname", "VERSION");
+    if ( "$suffix" ne "") {
+        $mpich_prefix= "$mpich_prefix" . "-" . "$suffix";
+    }
     my $rc;
     my $top;
     
     NormalPrint ("Uninstalling $ComponentInfo{$mpifullname}{'Name'}...\n");
-    if (lc($CUR_DISTRO_VENDOR) eq "redhat" &&
-	($CUR_VENDOR_VER eq "ES6" || $CUR_VENDOR_VER eq "ES6.1")) {
-	$top = rpm_query_attr_pkg("$mpifullname", "INSTPREFIXES");
-    } else {
 	$top = rpm_query_attr_pkg("$mpifullname", "INSTALLPREFIX");
-    }
     if ($top eq "" || $top =~ /is not installed/) {
-	$top = undef;
+		$top = undef;
     } else {
-	$top = `dirname $top`;
-	chomp $top;
+		$top = `dirname $top`;
+		chomp $top;
     }
     
     # uninstall tests in case built by do_build
     $rc = rpm_uninstall ("mpitests_$mpifullname", "user", "", "verbose");
     $rc = rpm_uninstall ($mpifullname, "user", "", "verbose");
 
-    if ( -d $top ) {
-	my @files = glob("$top/*");
-	my $num = scalar (@files);
-	if ( $num == 0 ) {
-	    system ("rm -rf $top");
+	# unfortunately mpi and mpitests can leave empty directories on uninstall
+	# this can confuse IFS MPI tools because correct MPI to use
+	# cannot be identified.  This remove such empty directories
+	if ( -d "$ROOT/$mpich_prefix" ) {
+		system("cd '$ROOT/$mpich_prefix'; rmdir -p tests/* >/dev/null 2>&1");
 	}
+    if ( -d $top ) {
+		my @files = glob("$top/*");
+		my $num = scalar (@files);
+		if ( $num == 0 ) {
+			system ("rm -rf $top");
+		}
     }
     
+	# cleanup from older installs just in case
     system ("rm -rf $ROOT/usr/lib/opa/.comp_$mpifullname.pl");
     system ("rmdir $ROOT/usr/lib/opa 2>/dev/null"); # remove only if empty
     $ComponentWasInstalled{$mpifullname} = 0;
@@ -133,20 +154,223 @@ sub uninstall_generic_mpi
 
 #############################################################################
 ##
-##    OpenMPI GCC
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_openmpi_gcc_hfi
-{
-}
+##    OpenMPI GCC Verbs
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
 # component isn't available on some OS/CPU combos)
-sub stop_openmpi_gcc_hfi
+sub available_openmpi_gcc
 {
+    my $srcdir = $ComponentInfo{'openmpi_gcc'}{'SrcDir'};
+    return rpm_exists ("$srcdir/openmpi_gcc", "user");
 }
+
+# is component X presently installed on the system.  This is
+# a quick check, not a "verify"
+sub installed_openmpi_gcc
+{
+    return  installed_generic_mpi("openmpi", "gcc", "");
+}
+
+# what is the version installed on system.  Only
+# called if installed_X is true.  versions are short strings displayed and
+# logged, no operations are done (eg. only compare for equality)
+sub installed_version_openmpi_gcc
+{
+    return rpm_query_version_release_pkg ("openmpi_gcc");
+}
+
+# only called if available_X.  Indicates version on
+# media.  Will be compared with installed_version_X to determine if
+# present installation is up to date.  Should return exact same format for
+# version string so comparison of equality is possible.
+sub media_version_openmpi_gcc
+{
+    my $srcdir = $ComponentInfo{'openmpi_gcc'}{'SrcDir'};
+    my $rpm = rpm_resolve ("$srcdir/openmpi_gcc", "user");
+    return rpm_query_version_release ($rpm);
+}
+
+# used to build/rebuild component on local system (if
+# supported).  We support this for many items in comp_ofed.pl
+# Other components (like SM) are
+# not available in source and hence do not support this and simply
+# implement a noop.
+sub build_openmpi_gcc
+{
+    my $osver = $_[0];
+    my $debug = $_[1];
+    my $build_temp = $_[2];
+    my $force = $_[3];
+
+    return 0;
+}
+
+# does this need to be reinstalled.  Mainly used for
+# ofed due to subtle changes such as install prefix or kernel options
+# which may force a reinstall.  You'll find this is a noop in most others.
+sub need_reinstall_openmpi_gcc
+{
+    my $install_list = shift ();
+    my $installing_list = shift ();
+
+    return "no";
+}
+
+# called for all components before they are installed.  Use to verify OS
+# has proper dependent rpms installed.
+sub check_os_prereqs_openmpi_gcc
+{
+	return rpm_check_os_prereqs("openmpi_gcc", "user");
+}
+
+# called for all components before they are installed.  Use
+# to build things if needed, etc.
+sub preinstall_openmpi_gcc
+{
+    my $install_list = $_[0];
+    my $installing_list = $_[1];
+
+    my $full = "";
+    my $rc;
+
+    return 0;
+}
+
+# installs component.  also handles reinstall on top of
+# existing installation and upgrade.
+sub install_openmpi_gcc
+{
+    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc", "");
+}
+
+# called after all components are installed.
+sub postinstall_openmpi_gcc
+{
+    my $install_list = $_[0];     # total that will be installed when done
+    my $installing_list = $_[1];  # what items are being installed/reinstalled
+}
+
+# uninstalls component.  May be called even if component is
+# partially or not installed at all in which case should do its best to
+# get rid or what might remain of component from a previously aborted
+# uninstall or failed install
+sub uninstall_openmpi_gcc
+{
+    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc", "");
+}
+
+#############################################################################
+##
+##    MVAPICH2 GCC Verbs
+
+# is component X available on the install media (use of this
+# allows for optional components in packaging or limited availability if a
+# component isn't available on some OS/CPU combos)
+sub available_mvapich2_gcc
+{
+    my $srcdir = $ComponentInfo{'mvapich2_gcc'}{'SrcDir'};
+    return rpm_exists ("$srcdir/mvapich2_gcc", "user");
+}
+
+# is component X presently installed on the system.  This is
+# a quick check, not a "verify"
+sub installed_mvapich2_gcc
+{
+    return  installed_generic_mpi("mvapich2", "gcc", "");
+}
+
+# what is the version installed on system.  Only
+# called if installed_X is true.  versions are short strings displayed and
+# logged, no operations are done (eg. only compare for equality)
+sub installed_version_mvapich2_gcc
+{
+    return rpm_query_version_release_pkg ("mvapich2_gcc");
+}
+
+# only called if available_X.  Indicates version on
+# media.  Will be compared with installed_version_X to determine if
+# present installation is up to date.  Should return exact same format for
+# version string so comparison of equality is possible.
+sub media_version_mvapich2_gcc
+{
+    my $srcdir = $ComponentInfo{'mvapich2_gcc'}{'SrcDir'};
+    my $rpm = rpm_resolve ("$srcdir/mvapich2_gcc", "user");
+    return rpm_query_version_release ($rpm);
+}
+
+# used to build/rebuild component on local system (if
+# supported).  We support this for many items in comp_ofed.pl
+# Other components (like SM) are
+# not available in source and hence do not support this and simply
+# implement a noop.
+sub build_mvapich2_gcc
+{
+    my $osver = $_[0];
+    my $debug = $_[1];
+    my $build_temp = $_[2];
+    my $force = $_[3];
+
+    return 0;
+}
+
+# does this need to be reinstalled.  Mainly used for
+# ofed due to subtle changes such as install prefix or kernel options
+# which may force a reinstall.  You'll find this is a noop in most others.
+sub need_reinstall_mvapich2_gcc
+{
+    my $install_list = shift ();
+    my $installing_list = shift ();
+
+    return "no";
+}
+
+# called for all components before they are installed.  Use to verify OS
+# has proper dependent rpms installed.
+sub check_os_prereqs_mvapich2_gcc
+{
+	return rpm_check_os_prereqs("mvapich2_gcc", "user");
+}
+
+# called for all components before they are installed.  Use
+# to build things if needed, etc.
+sub preinstall_mvapich2_gcc
+{
+    my $install_list = $_[0];
+    my $installing_list = $_[1];
+
+    my $full = "";
+    my $rc;
+
+    return 0;
+}
+
+# installs component.  also handles reinstall on top of
+# existing installation and upgrade.
+sub install_mvapich2_gcc
+{
+	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc", "");
+}
+
+# called after all components are installed.
+sub postinstall_mvapich2_gcc
+{
+    my $install_list = $_[0];     # total that will be installed when done
+    my $installing_list = $_[1];  # what items are being installed/reinstalled
+}
+
+# uninstalls component.  May be called even if component is
+# partially or not installed at all in which case should do its best to
+# get rid or what might remain of component from a previously aborted
+# uninstall or failed install
+sub uninstall_mvapich2_gcc
+{
+    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc", "");
+}
+
+#############################################################################
+##
+##    OpenMPI GCC PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -154,14 +378,14 @@ sub stop_openmpi_gcc_hfi
 sub available_openmpi_gcc_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_gcc_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "openmpi_gcc_hfi");
+    return rpm_exists ("$srcdir/openmpi_gcc_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_openmpi_gcc_hfi
 {
-    return  installed_generic_mpi("openmpi", "gcc");
+    return  installed_generic_mpi("openmpi", "gcc", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -179,7 +403,7 @@ sub installed_version_openmpi_gcc_hfi
 sub media_version_openmpi_gcc_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_gcc_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "openmpi_gcc_hfi");
+    my $rpm = rpm_resolve ("$srcdir/openmpi_gcc_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -233,7 +457,7 @@ sub preinstall_openmpi_gcc_hfi
 # existing installation and upgrade.
 sub install_openmpi_gcc_hfi
 {
-    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc");
+    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc", "hfi");
 }
 
 # called after all components are installed.
@@ -249,25 +473,12 @@ sub postinstall_openmpi_gcc_hfi
 # uninstall or failed install
 sub uninstall_openmpi_gcc_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc", "hfi");
 }
 
 #############################################################################
 ##
-##    OpenMPI Intel
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_openmpi_intel_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_openmpi_intel_hfi
-{
-}
+##    OpenMPI Intel PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -275,14 +486,14 @@ sub stop_openmpi_intel_hfi
 sub available_openmpi_intel_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_intel_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "openmpi_intel_hfi");
+    return rpm_exists ("$srcdir/openmpi_intel_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_openmpi_intel_hfi
 {
-    return  installed_generic_mpi("openmpi", "intel");
+    return  installed_generic_mpi("openmpi", "intel", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -300,7 +511,7 @@ sub installed_version_openmpi_intel_hfi
 sub media_version_openmpi_intel_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_intel_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "openmpi_intel_hfi");
+    my $rpm = rpm_resolve ("$srcdir/openmpi_intel_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -354,7 +565,7 @@ sub preinstall_openmpi_intel_hfi
 # existing installation and upgrade.
 sub install_openmpi_intel_hfi
 {
-    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "intel");
+    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "intel", "hfi");
 }
 
 # called after all components are installed.
@@ -370,25 +581,12 @@ sub postinstall_openmpi_intel_hfi
 # uninstall or failed install
 sub uninstall_openmpi_intel_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "intel");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "intel", "hfi");
 }
 
 #############################################################################
 ##
-##    OpenMPI PGI
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_openmpi_pgi_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_openmpi_pgi_hfi
-{
-}
+##    OpenMPI PGI PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -396,14 +594,14 @@ sub stop_openmpi_pgi_hfi
 sub available_openmpi_pgi_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_pgi_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "openmpi_pgi_hfi");
+    return rpm_exists ("$srcdir/openmpi_pgi_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_openmpi_pgi_hfi
 {
-    return  installed_generic_mpi("openmpi", "pgi");
+    return  installed_generic_mpi("openmpi", "pgi", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -421,7 +619,7 @@ sub installed_version_openmpi_pgi_hfi
 sub media_version_openmpi_pgi_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_pgi_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "openmpi_pgi_hfi");
+    my $rpm = rpm_resolve ("$srcdir/openmpi_pgi_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -475,7 +673,7 @@ sub preinstall_openmpi_pgi_hfi
 # existing installation and upgrade.
 sub install_openmpi_pgi_hfi
 {
-	install_generic_mpi("$_[0]", "$_[1]", "openmpi", "pgi");
+	install_generic_mpi("$_[0]", "$_[1]", "openmpi", "pgi", "hfi");
 }
 
 # called after all components are installed.
@@ -491,25 +689,12 @@ sub postinstall_openmpi_pgi_hfi
 # uninstall or failed install
 sub uninstall_openmpi_pgi_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "pgi");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "pgi", "hfi");
 }
 
 #############################################################################
 ##
-##    MVAPICH2 GCC
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_mvapich2_gcc_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_mvapich2_gcc_hfi
-{
-}
+##    MVAPICH2 GCC PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -517,14 +702,14 @@ sub stop_mvapich2_gcc_hfi
 sub available_mvapich2_gcc_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_gcc_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "mvapich2_gcc_hfi");
+    return rpm_exists ("$srcdir/mvapich2_gcc_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_mvapich2_gcc_hfi
 {
-    return  installed_generic_mpi("mvapich2", "gcc");
+    return  installed_generic_mpi("mvapich2", "gcc", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -542,7 +727,7 @@ sub installed_version_mvapich2_gcc_hfi
 sub media_version_mvapich2_gcc_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_gcc_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "mvapich2_gcc_hfi");
+    my $rpm = rpm_resolve ("$srcdir/mvapich2_gcc_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -577,7 +762,7 @@ sub need_reinstall_mvapich2_gcc_hfi
 sub check_os_prereqs_mvapich2_gcc_hfi
 {
 	return rpm_check_os_prereqs("mvapich2_gcc_hfi", "user");
-}                              
+}
 
 # called for all components before they are installed.  Use
 # to build things if needed, etc.
@@ -596,7 +781,7 @@ sub preinstall_mvapich2_gcc_hfi
 # existing installation and upgrade.
 sub install_mvapich2_gcc_hfi
 {
-	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc");
+	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc", "hfi");
 }
 
 # called after all components are installed.
@@ -612,25 +797,12 @@ sub postinstall_mvapich2_gcc_hfi
 # uninstall or failed install
 sub uninstall_mvapich2_gcc_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "gcc", "hfi");
 }
 
 #############################################################################
 ##
-##    MVAPICH2 Intel
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_mvapich2_intel_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_mvapich2_intel_hfi
-{
-}
+##    MVAPICH2 Intel PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -638,14 +810,14 @@ sub stop_mvapich2_intel_hfi
 sub available_mvapich2_intel_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_intel_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "mvapich2_intel_hfi");
+    return rpm_exists ("$srcdir/mvapich2_intel_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_mvapich2_intel_hfi
 {
-    return  installed_generic_mpi("mvapich2", "intel");
+    return  installed_generic_mpi("mvapich2", "intel", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -663,7 +835,7 @@ sub installed_version_mvapich2_intel_hfi
 sub media_version_mvapich2_intel_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_intel_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "mvapich2_intel_hfi");
+    my $rpm = rpm_resolve ("$srcdir/mvapich2_intel_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -718,7 +890,7 @@ sub preinstall_mvapich2_intel_hfi
 # existing installation and upgrade.
 sub install_mvapich2_intel_hfi
 {
-	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "intel");
+	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "intel", "hfi");
 }
 
 # called after all components are installed.
@@ -734,25 +906,12 @@ sub postinstall_mvapich2_intel_hfi
 # uninstall or failed install
 sub uninstall_mvapich2_intel_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "intel");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "intel", "hfi");
 }
 
 #############################################################################
 ##
-##    MVAPICH2 PGI
-
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_mvapich2_pgi_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_mvapich2_pgi_hfi
-{
-}
+##    MVAPICH2 PGI PSM
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -760,14 +919,14 @@ sub stop_mvapich2_pgi_hfi
 sub available_mvapich2_pgi_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_pgi_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "mvapich2_pgi_hfi");
+    return rpm_exists ("$srcdir/mvapich2_pgi_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_mvapich2_pgi_hfi
 {
-    return  installed_generic_mpi("mvapich2", "pgi");
+    return  installed_generic_mpi("mvapich2", "pgi", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -785,7 +944,7 @@ sub installed_version_mvapich2_pgi_hfi
 sub media_version_mvapich2_pgi_hfi
 {
     my $srcdir = $ComponentInfo{'mvapich2_pgi_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "mvapich2_pgi_hfi");
+    my $rpm = rpm_resolve ("$srcdir/mvapich2_pgi_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -840,7 +999,7 @@ sub preinstall_mvapich2_pgi_hfi
 # existing installation and upgrade.
 sub install_mvapich2_pgi_hfi
 {
-	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "pgi");
+	install_generic_mpi("$_[0]", "$_[1]", "mvapich2", "pgi", "hfi");
 }
 
 # called after all components are installed.
@@ -856,27 +1015,15 @@ sub postinstall_mvapich2_pgi_hfi
 # uninstall or failed install
 sub uninstall_mvapich2_pgi_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "pgi");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "mvapich2", "pgi", "hfi");
 }
 
 
 
 #############################################################################
 ###
-#+##    OpenMPI GCC CUDA
+###    OpenMPI GCC CUDA
 #
-# immediately stops or starts given component, only
-# called if HasStart
-sub start_openmpi_gcc_cuda_hfi
-{
-}
-
-# is component X available on the install media (use of this
-# allows for optional components in packaging or limited availability if a
-# component isn't available on some OS/CPU combos)
-sub stop_openmpi_gcc_cuda_hfi
-{
-}
 
 # is component X available on the install media (use of this
 # allows for optional components in packaging or limited availability if a
@@ -884,14 +1031,14 @@ sub stop_openmpi_gcc_cuda_hfi
 sub available_openmpi_gcc_cuda_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_gcc_cuda_hfi'}{'SrcDir'};
-    return rpm_exists ("$srcdir", "user", "openmpi_gcc_cuda_hfi");
+    return rpm_exists ("$srcdir/openmpi_gcc_cuda_hfi", "user");
 }
 
 # is component X presently installed on the system.  This is
 # a quick check, not a "verify"
 sub installed_openmpi_gcc_cuda_hfi
 {
-    return  installed_generic_mpi("openmpi", "gcc_cuda");
+    return  installed_generic_mpi("openmpi", "gcc_cuda", "hfi");
 }
 
 # what is the version installed on system.  Only
@@ -909,7 +1056,7 @@ sub installed_version_openmpi_gcc_cuda_hfi
 sub media_version_openmpi_gcc_cuda_hfi
 {
     my $srcdir = $ComponentInfo{'openmpi_gcc_cuda_hfi'}{'SrcDir'};
-    my $rpm = rpm_resolve ("$srcdir", "user", "openmpi_gcc_cuda_hfi");
+    my $rpm = rpm_resolve ("$srcdir/openmpi_gcc_cuda_hfi", "user");
     return rpm_query_version_release ($rpm);
 }
 
@@ -963,7 +1110,7 @@ sub preinstall_openmpi_gcc_cuda_hfi
 # existing installation and upgrade.
 sub install_openmpi_gcc_cuda_hfi
 {
-    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc_cuda");
+    install_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc_cuda", "hfi");
 }
 
 # called after all components are installed.
@@ -979,6 +1126,146 @@ sub postinstall_openmpi_gcc_cuda_hfi
 # uninstall or failed install
 sub uninstall_openmpi_gcc_cuda_hfi
 {
-    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc_cuda");
+    uninstall_generic_mpi("$_[0]", "$_[1]", "openmpi", "gcc_cuda", "hfi");
 }
 
+#############################################################################
+###
+###    MPI Source
+
+sub available_mpisrc()
+{
+	my $srcdir=$ComponentInfo{'mpisrc'}{'SrcDir'};
+	return has_mpisrc($srcdir);
+	#return ( (-d "$srcdir/SRPMS" || -d "$srcdir/RPMS" ) );
+}
+
+sub installed_mpisrc()
+{
+	my $srcdir = "$ROOT/usr/src/opa/MPI";
+	my $old_srcdir = "$ROOT/usr/lib/opa/src/MPI";
+	return (has_mpisrc($srcdir) || has_mpisrc($old_srcdir));
+}
+
+sub has_mpisrc($)
+{
+	my $srcdir = shift();
+	return (file_glob("$srcdir/mvapich*.src.rpm") ne ""
+	        && file_glob("$srcdir/openmpi*.src.rpm") ne ""
+	        && file_glob("$srcdir/mpitests*.src.rpm") ne "");
+}
+
+# only called if installed_mpisrc is true
+sub installed_version_mpisrc()
+{
+	return `cat $ROOT/usr/src/opa/MPI/.version`;
+}
+
+# only called if available_mpisrc is true
+sub media_version_mpisrc()
+{
+	my $srcdir=$ComponentInfo{'mpisrc'}{'SrcDir'};
+	return `cat "$srcdir/version"`;
+}
+
+sub build_mpisrc($$$$)
+{
+	my $osver = shift();
+	my $debug = shift();	# enable extra debug of build itself
+	my $build_temp = shift();	# temp area for use by build
+	my $force = shift();	# force a rebuild
+	return 0;	# success
+}
+
+sub need_reinstall_mpisrc($$)
+{
+	my $install_list = shift();	# total that will be installed when done
+	my $installing_list = shift();	# what items are being installed/reinstalled
+
+    return "no";
+}
+
+sub check_os_prereqs_mpisrc
+{
+	return rpm_check_os_prereqs("mpisrc", "any");
+}
+
+sub preinstall_mpisrc($$)
+{
+	my $install_list = shift();	# total that will be installed when done
+	my $installing_list = shift();	# what items are being installed/reinstalled
+
+    return 0;
+}
+
+sub install_mpisrc($$)
+{
+	my $install_list = shift();	# total that will be installed when done
+	my $installing_list = shift();	# what items are being installed/reinstalled
+
+	my $srcdir=$ComponentInfo{'mpisrc'}{'SrcDir'};
+    my $version = media_version_mpisrc();
+    chomp $version;
+
+    printf ("Installing $ComponentInfo{'mpisrc'}{'Name'} $version...\n");
+    LogPrint ("Installing $ComponentInfo{'mpisrc'}{'Name'} $version for $CUR_OS_VER\n");
+
+	check_dir("/usr/src/opa");
+	check_dir("/usr/src/opa/MPI");
+	# remove old versions (.src.rpm and built .rpm files too)
+	system "rm -rf $ROOT/usr/src/opa/MPI/mvapich[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/mvapich2[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/openmpi[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/mpitests[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.res 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.err 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.warn 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/.mpiinfo 2>/dev/null";
+
+	# install new versions
+	foreach my $srpm ( "mvapich2", "openmpi", "mpitests" ) {
+		my $srpmfile = file_glob("$srcdir/${srpm}-*.src.rpm");
+		if ( "$srpmfile" ne "" ) {
+			my $file = my_basename($srpmfile);
+			copy_data_file($srpmfile, "/usr/src/opa/MPI/$file");
+		}
+	}
+	copy_systool_file("$srcdir/do_build", "/usr/src/opa/MPI/do_build");
+	copy_systool_file("$srcdir/do_mvapich2_build", "/usr/src/opa/MPI/do_mvapich2_build");
+	copy_systool_file("$srcdir/do_openmpi_build", "/usr/src/opa/MPI/do_openmpi_build");
+	copy_data_file("$srcdir/version", "/usr/src/opa/MPI/.version");
+
+	$ComponentWasInstalled{'mpisrc'}=1;
+}
+
+sub postinstall_mpisrc($$)
+{
+	my $install_list = shift();	# total that will be installed when done
+	my $installing_list = shift();	# what items are being installed/reinstalled
+}
+
+sub uninstall_mpisrc($$)
+{
+	my $install_list = shift();	# total that will be left installed when done
+	my $uninstalling_list = shift();	# what items are being uninstalled
+
+    NormalPrint ("Uninstalling $ComponentInfo{'mpisrc'}{'Name'}...\n");
+
+	# remove old versions (.src.rpm and built .rpm files too)
+	system "rm -rf $ROOT/usr/src/opa/MPI/.version 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/mvapich2[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/openmpi[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/mpitests[-_]*.rpm 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.res 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.err 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/make.*.warn 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/.mpiinfo 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/do_build 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/do_mvapich2_build 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/do_openmpi_build 2>/dev/null";
+	system "rm -rf $ROOT/usr/src/opa/MPI/.mpiinfo 2>/dev/null";
+
+	system "rmdir $ROOT/usr/src/opa/MPI 2>/dev/null"; # remove only if empty
+	system "rmdir $ROOT/usr/src/opa 2>/dev/null"; # remove only if empty
+	$ComponentWasInstalled{'mpisrc'}=0;
+}

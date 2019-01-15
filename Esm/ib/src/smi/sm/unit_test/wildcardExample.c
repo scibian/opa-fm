@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -173,7 +173,7 @@ int main()
 
 	      //Make a copy of the node name, which we will manipulate to extract the number out of using the regmatch_t struct fields
 	      char nodeName[strlen(nodeNamesArray[nodeIdx]) + 1];
-	      cs_strlcpy(nodeName, nodeNamesArray[nodeIdx], sizeof(nodeName));
+	      StringCopy(nodeName, nodeNamesArray[nodeIdx], sizeof(nodeName));
 	      nodeName[groupArray[bracketGroupNum].rm_eo] = 0;
 
 	      //Get the number to evalute by incrementing the node name to the position of the number

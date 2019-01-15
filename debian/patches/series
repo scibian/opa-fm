@@ -1,4 +1,0 @@
-makefile-osvendor.patch
-lspci-path.patch
-fix-manpage-errors.patch
-port-fm_capture.patch

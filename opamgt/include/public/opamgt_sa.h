@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT2 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -255,8 +255,7 @@ omgt_sa_get_nodedesc_records(
  * @param selector		 Criteria to select records.
  *                		 Valid InputType values:
  *                		 	NoInput, PortGuid, PortGid, PortGuidPair, GidPair,
- *                		 	PathRecord, PortGuidList, GidList, Lid,
- *                		 	PKey, SL, ServiceId
+ *                		 	PathRecord, Lid, PKey, SL, ServiceId
  * @note
  * A sourcegid is always required with this query
  *
@@ -497,6 +496,28 @@ omgt_sa_get_scvlt_table_records(
 
 
 /**
+ * @brief Query SA for SCVLr Table Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                		 Valid InputType values:
+ *                		 	NoInput, Lid
+ * @param num_records	Output: The number of records returned in query
+ * @param records		Output: Pointer to records.
+ *								Must be freed by calling omgt_sa_free_records
+ *
+ *@return		   OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_scvlr_table_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_SC2PVL_R_MAPPING_TABLE_RECORD **records
+	);
+
+
+/**
  * @brief Query SA for SCVLnt Table Records
  *
  * @param port			 port opened by omgt_open_port_*
@@ -516,6 +537,75 @@ omgt_sa_get_scvlnt_table_records(
 	int32_t *num_records,
 	STL_SC2PVL_NT_MAPPING_TABLE_RECORD **records
 	);
+
+
+/**
+ * @brief Query SA for DeviceGroupName Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicegroupname_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_GROUP_NAME_RECORD **records
+	);
+
+
+
+/**
+ * @brief Query SA for DeviceGroupMember Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput, Lid, PortGuid, NodeDesc, DeviceGroup
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicegroupmember_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_GROUP_MEMBER_RECORD **records
+	);
+
+
+
+/**
+ * @brief Query SA for DeviceTreeMember Records
+ *
+ * @param port			 port opened by omgt_open_port_*
+ * @param selector		 Criteria to select records.
+ *                       Valid InputType values:
+ *                         NoInput, Lid
+ * @param num_records	 Output: The number of records returned in query
+ * @param records		 Output: Pointer to records.
+ *                               Must be freed by calling omgt_sa_free_records
+ *
+ * @return		OMGT_STATUS_SUCCESS if success, else error code
+ */
+OMGT_STATUS_T
+omgt_sa_get_devicetreemember_records(
+	struct omgt_port *port,
+	omgt_sa_selector_t *selector,
+	int32_t *num_records,
+	STL_DEVICE_TREE_MEMBER_RECORD **records
+	);
+
 
 
 /**
@@ -604,6 +694,8 @@ omgt_sa_get_vlarb_records(
 	int32_t *num_records,
 	STL_VLARBTABLE_RECORD **records
 	);
+
+
 
 
 /**

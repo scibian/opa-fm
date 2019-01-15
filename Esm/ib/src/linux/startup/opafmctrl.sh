@@ -1,7 +1,7 @@
 #!/bin/bash
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -215,7 +215,7 @@ get_config()
 
 	i=-1
 	export IFS=\;
-	EXTRACT_CMD="$IFS_FM_BASE/bin/opaxmlextract -H -e Common.Sm.Start -e Common.Fe.Start -e Fm.Shared.Name -e Fm.Shared.Start -e Fm.Sm.Start -e Fm.Fe.Start"
+	EXTRACT_CMD="$IFS_FM_BASE/bin/opafmxmlextract -H -e Common.Sm.Start -e Common.Fe.Start -e Fm.Shared.Name -e Fm.Shared.Start -e Fm.Sm.Start -e Fm.Fe.Start"
 	if [ "$quiet" != y ]
 	then
 		eval $EXTRACT_CMD < $CONFIG_FILE > $temp

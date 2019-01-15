@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -58,7 +58,9 @@ CFILES			= \
 				src/omgt_oob_net.c  \
 				src/omgt_oob_net_blob.c \
 				src/omgt_oob_net_queue.c \
-				src/omgt_oob_ssl.c
+				src/omgt_oob_ssl.c \
+				src/opamgt_ea.c
+
 				# Add more c files here
 # C++ files (.cpp)
 CCFILES			= \
@@ -87,7 +89,8 @@ INCLUDE_TARGETS	= \
 				include/opamgt_priv.h \
 				include/opamgt_pa_priv.h \
 				include/opamgt_sa_priv.h \
-				src/omgt_oob_ssl.h
+				include/opamgt_ea_priv.h \
+				src/omgt_oob_ssl.h 
 				# Add more h hpp files here
 # Library example files, to be include during staging
 SAMPLE_TARGETS = \
@@ -153,7 +156,8 @@ INCLUDE_SUBDIR		=
 #LOCAL_LIB_DIRS	= User library directories for libpaths [Empty]
 
 CLOCAL=$(CIBACCESS) $(CPIC)
-LOCALDEPLIBS = 
+CLOCALDEBUG=-Og
+LOCALDEPLIBS =
 LOCALDEPLIBS=$(IBACCESS_USER_LIBS)
 LOCAL_INCLUDE_DIRS=include . src
 LOCALLIBS=$(OPENIB_USER_LIBS)

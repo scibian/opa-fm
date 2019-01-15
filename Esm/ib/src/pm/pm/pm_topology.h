@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -67,6 +67,7 @@ extern "C" {
 
 // Used By Get/Clear Vf PortCounters to Access VL 15 Counters
 #define HIDDEN_VL15_VF	"HIDDEN_VL15_VF"
+#define PA_ALL_GROUP_NAME "All"
 
 // special ImageId of 0 is used to access live data
 // -1 is used to request Images by time 
@@ -76,10 +77,12 @@ extern "C" {
 #define IMAGEID_LIVE_DATA			 0	// 64 bit ImageId to access live data
 #define IMAGEID_ABSOLUTE_TIME		-1	// 64 bit ImageID to request image by time
 
-// values for ImageId.s.type field, used to determine which table to look in
+// values for ImageId.s.type field, used to determine which table to look in, or
+// to determine if an image came from disk.
 #define IMAGEID_TYPE_ANY			0	// Matches any image ID type
 #define IMAGEID_TYPE_FREEZE_FRAME	1	// client requested Freeze Frame
 #define IMAGEID_TYPE_HISTORY		2	// last sweep and recent history
+#define IMAGEID_TYPE_HISTORY_DISK	3	// Recent history *disk only*
 
 #define IMAGEID_MAX_INSTANCE_ID		256	// 8 bit field
 										  
@@ -103,7 +106,7 @@ typedef union {
 #define PM_MAX_GROUPS_PER_PORT 4	// we keep this small to bound compute needs
 			// 4 groups plus the All group gives max of 5 groups per port
 			// IntLinkFlags must be at least this many bits, presently 8 bits
-			// and portImage->u.s.InGroups must be able to hold this value
+			// and portImage->numGroups must be able to hold this value
 
 // how much beyond maxLid to allocate to allow for growth without realloc
 #define PM_LID_MAP_SPARE	512
@@ -111,6 +114,16 @@ typedef union {
 #define PM_LID_MAP_FREE_THRESHOLD	1024
 // TBD - pre-size based on subnet size?  Or perhaps have above be a function
 // of subnet size?
+
+#ifdef __VXWORKS__
+/* Use 1000 to match HSM's define for MAX_VABRICS which is a redefinition
+ * of MAX_ENABLED_VFABRICS. MAX_ENABLED_VFABRICS is defined in fm_xml.h.
+ */
+#define MAX_PM_COMP_VFABRICS 1000
+#else /* __VXWORKS__ */
+#define MAX_PM_COMP_VFABRICS MAX_VFABRICS
+#endif /* __VXWORKS__ */
+
 
 // This is a consolidation of the counters of interest from PortStatus
 // We use the same datatypes for each counter (hence same range) as in PMA
@@ -159,7 +172,9 @@ typedef struct PmCompositePortCounters_s {
 #endif	// CPU_BE
 		} s;
 	} lq;
-	uint8	Reserved2[6];
+
+	uint8	Reserved2[30];
+
 } PmCompositePortCounters_t;
 
 typedef struct _vls_pctrs PmCompositeVLCounters_t;
@@ -167,8 +182,7 @@ typedef struct _vls_pctrs PmCompositeVLCounters_t;
 
 typedef struct PmCompositeVfvlmap_s {
 	uint32	vlmask;
-	uint8   VF; //index into vf array
-	uint8	Reserved[3];
+	uint32  VF; //index into vf array
 } PmCompositeVfvlmap_t;
 
 #define UPDATE_MAX(max, cnt) do { if (cnt > max) max = cnt; } while (0)
@@ -277,9 +291,9 @@ typedef struct PmUtilStats_s {
 	uint32 MinKPps;	// minimum kilo packets/sec of all selected ports
 	uint32 MaxKPps;	// maximum kilo packets/sec of all selected ports
 
-	uint16 pmaNoRespPorts;  // Number of ports with no response but were still able
+	uint16 pmaNoRespPorts;  // Number of ports with failures but were still able
 							// to be included in Group/Vf Stats
-	uint16 topoIncompPorts; // Number of ports with no response that were not able
+	uint16 topoIncompPorts; // Number of ports with failures that were not able
 							// to be included in Group/Vf Stats
 	// buckets for packets/sec % don't make much sense since theroretical
 	// limit is a function of packet size, hence confusing to report
@@ -329,55 +343,46 @@ typedef struct PmGroup_s {
 	char Name[STL_PM_GROUPNAMELEN];	// \0 terminated
 	// function to decide if new ports in topology should be added to group
 	PmComparePortFunc_t ComparePortFunc;
+} PmGroup_t;
 
-	// group per Image data protected by Pm.Image[].imageLock
-	// must be last in structure so can dynamically size total images in future
-	struct PmGroupImage_s {
-		uint32	NumIntPorts;	// # of ports in group for links in-group
-		uint32	NumExtPorts;	// # of ports in group for links between-group
+typedef struct PmGroupImage_s {
+	uint32	NumIntPorts;	// # of ports in group for links in-group
+	uint32	NumExtPorts;	// # of ports in group for links between-group
 
-		// statistics
-		PmUtilStats_t IntUtil;	// when both ports in group
-		PmUtilStats_t SendUtil;	// send from group to outside
-		PmUtilStats_t RecvUtil;	// recv by group from outside
+	// statistics
+	PmUtilStats_t IntUtil;	// when both ports in group
+	PmUtilStats_t SendUtil;	// send from group to outside
+	PmUtilStats_t RecvUtil;	// recv by group from outside
 
 // TBD better wording, don't want customer to confuse Internal to a group
 // with Internal to a chassis
-		// for Internal (in-group) we count one each port (both are in group)
-		// for External (between-group), we count worst of our port and its neighbor
-		PmErrStats_t IntErr;// in group
-		PmErrStats_t ExtErr;// between groups
-		uint8	MinIntRate;
-		uint8	MaxIntRate;
-		uint8	MinExtRate;
-		uint8	MaxExtRate;
-		uint32	padding;	// for alignment
-	} Image[1];	// sized when allocate PmGroup_t
-} PmGroup_t;
-
-typedef	struct PmGroupImage_s PmGroupImage_t;
+	// for Internal (in-group) we count one each port (both are in group)
+	// for External (between-group), we count worst of our port and its neighbor
+	PmErrStats_t IntErr;// in group
+	PmErrStats_t ExtErr;// between groups
+	uint8	MinIntRate;
+	uint8	MaxIntRate;
+	uint8	MinExtRate;
+	uint8	MaxExtRate;
+	uint32	padding;	// for alignment
+} PmGroupImage_t;
 
 typedef struct PmVF_s {
-	// configuration  - unchanging, no lock needed
-	char Name[MAX_VFABRIC_NAME];	// \0 terminated
-
-	// VF per Image data protected by Pm.Image[].imageLock
-	// must be last in structure so can dynamically size total images in future
-	struct PmVFImage_s {
-		uint8 	isActive;
-		uint32	NumPorts;		// # of ports in VF
-
-		// statistics
-		PmUtilStats_t IntUtil;	// all stats for VF are internal
-
-		PmErrStats_t IntErr;// in VF
-
-		uint8	MinIntRate;
-		uint8	MaxIntRate;
-	} Image[1];	// sized when allocate PmVF_t
+	char Name[MAX_VFABRIC_NAME]; // \0 terminated
+	uint8 isActive;
 } PmVF_t;
 
-typedef	struct PmVFImage_s PmVFImage_t;
+typedef	struct PmVFImage_s {
+	uint32	NumPorts;		// # of ports in VF
+
+	// statistics
+	PmUtilStats_t IntUtil;	// all stats for VF are internal
+
+	PmErrStats_t IntErr;// in VF
+
+	uint8	MinIntRate;
+	uint8	MaxIntRate;
+} PmVFImage_t;
 
 // for FI, one instance per Active Port
 // for Switch, one instance per Switch
@@ -387,7 +392,8 @@ typedef struct PmNode_s {
 	cl_map_item_t	AllNodesEntry;	// engine use only, key is portGuid
 
 	// these fields do not change and are tracked once for the Node
-	Guid_t			guid;
+	Guid_t			NodeGUID;
+	Guid_t			SystemImageGUID;
 // TBD - track system image guid?
 	STL_NODE_DESCRIPTION		nodeDesc;	// we keep latest name, rarely changes
 	uint32			changed_count;	// topology_changed_count when last saw node
@@ -410,13 +416,15 @@ typedef struct PmNode_s {
 			uint16	PmaAvoid:1; 			// node does not have a working PMA or
 											//  PM sweeping has been disabled for this Node
 			uint16	PmaGotClassPortInfo:1;	// has Pma capabilities been init'ed
+
 			uint16	Reserved:14;			// 14 spare bits
+
 		} s;
 	} u;
 
 	// Path Information to talk to Node's PMA
 	// we keep latest information here, only used when doing current sweep
-	uint16			dlid;		// for PMA Redirect
+	STL_LID			dlid;		// for PMA Redirect
 	uint16			pkey;		// for PMA Redirect
 	uint32			qpn:24;		// for PMA Redirect
 	uint32			sl:4;		// set when update_path
@@ -426,7 +434,7 @@ typedef struct PmNode_s {
 	// must be last in structure so can dynamically size total images in future
 	struct PmNodeImage_s {
 		// can change per sweep, so track per sweep and can be Freeze Framed
-		uint16			lid;		// for switch, its lid of port 0
+		STL_LID		lid;		// for switch, its lid of port 0
 	} Image[1];	// sized when allocate PmNode_t
 } PmNode_t;
 
@@ -440,7 +448,6 @@ typedef	struct PmNodeImage_s PmNodeImage_t;
 #define PM_QUERY_STATUS_FAIL_CLEAR	0x3	// query ok, but failed clear
 
 typedef struct _vfmap {
-	PmVF_t *pVF;
 	uint32 vlmask;
 } vfmap_t;
 
@@ -478,8 +485,10 @@ typedef struct PmPort_s {
 	} u;
 
 	// lid/portnum of neighbor is temp data only used while doing sweep
-	STL_LID_32 		neighbor_lid;
-	PORT 			neighbor_portNum;   // only valid if neighbor_lid != 0
+	STL_LID 		neighbor_lid;
+	PORT 			neighbor_portNum;	// only valid if neighbor_lid != 0
+
+	bitset_t dgMember; // Copy of DeviceGroup Memebership from SM
 
 	// count warnings
 	uint32 groupWarnings;
@@ -510,15 +519,13 @@ typedef struct PmPort_s {
 		} u;
 		struct PmPort_s	*neighbor;		// Pointer to Neighbor Port
 
-		uint16_t	dgMember[MAX_DEVGROUPS];			// Copy of DeviceGroup Memebership from SM
-
 		PmGroup_t 	*Groups[PM_MAX_GROUPS_PER_PORT];	// PortGroups (In additon to All) this port is a member of.
 		uint8		numGroups;							// Number of PortGroups
 		uint8		InternalBitMask;					// If Port is Internal to PortGroup Bit Mask (this and neighbor in group)
-	
-		uint8 		numVFs;                             // Number of VFs
+
+		uint32 		numVFs;                             // Number of VFs
 		vfmap_t 	vfvlmap[MAX_VFABRICS];				// VFs this port is a member of.
-														//                                
+
 		uint32_t 	vlSelectMask;                       // Aggreate of Active VLs used by VFs (also VL 15)
 		CounterSelectMask_t 		clearSelectMask;	// Counter Mask of Counters Cleared after the above data was recorded
 
@@ -531,7 +538,7 @@ typedef struct PmPort_s {
 
 
 	} Image[1]; // sized when allocate PmPort_t
-} PmPort_t; 
+} PmPort_t;
 
 #define PM_PORT_ERROR_SUMMARY(portImage, lli, ler)	((portImage)->StlPortCounters.PortRcvConstraintErrors + \
 											(portImage)->StlPortCounters.PortRcvSwitchRelayErrors + \
@@ -675,22 +682,23 @@ typedef struct PmImage_s {
 // TBD - SM LidMap could similarly use an array for rapid lookup
 // and keep lidmap, maxlid, size per sweep
 	PmNode_t	**LidMap;
-	STL_LID_32	lidMapSize;	// number of entries allocated in LidMap
-	STL_LID_32	maxLid;
+	STL_LID	lidMapSize;	// number of entries allocated in LidMap
+	STL_LID	maxLid;
 
 	time_t		sweepStart;	// when started sweep, seconds since 1970
 	uint32		sweepDuration;	// in usec
+	uint32      imageInterval; // in sec
 
 	// counts of devices found during this sweep
 	uint16		HFIPorts;		// count of active HFI ports
 // TFI not included in Gen1
 //	uint16		TFIPorts;		// count of active TFI ports
 	uint16		SwitchNodes;	// count of Switch Nodes
-	uint32		SwitchPorts;	// count of Switch Ports (excludes Port 0)
+	uint32		SwitchPorts;	// count of Switch Ports (includes Port 0)
 	uint32		NumLinks;		// count of links (includes internal)
 	uint32		NumSMs;			// count of SMs (including us)
 	struct PmSmInfo {
-		uint16	smLid;			// implies port, 0 if empty record
+		STL_LID	smLid;			// implies port, 0 if empty record
 		uint8	priority:4;		// present priority
 		uint8	state:4;		// present state
 	} SMs[2];					// track just master and 1st secondary
@@ -703,17 +711,28 @@ typedef struct PmImage_s {
 	uint32		UnexpectedClearPorts;	// Ports which whose counters decreased
 	uint32		DowngradedPorts; // Ports whose Link Width has been downgraded
 
+	// User Configured Groups + HFIs and SWs (All is implied)
+	uint32 NumGroups;
+	PmGroup_t Groups[PM_MAX_GROUPS];
+
+	uint32 NumVFs;
+	uint32 NumVFsActive;
+	PmVF_t VFs[MAX_VFABRICS];
 } PmImage_t;
 
 // --------------- Short-Term PA History --------------------
+//TBD: OPA_VERSION_MAJOR should be moved to a more generic location
+#define OPA_VERSION_MAJOR 10
+#define PM_HISTORY_VERSION (11 | (OPA_VERSION_MAJOR << 24))
+// Old version currently supported by PA
+#define PM_HISTORY_VERSION_OLD 10
 
 #define PM_HISTORY_FILENAME_LEN 136		// max length of full filepath
 										// MUST BE MULTIPLE OF 8
 #define PM_HISTORY_MAX_IMAGES_PER_COMPOSITE 60
 #define PM_HISTORY_MAX_SMS_PER_COMPOSITE 2
 #define PM_HISTORY_MAX_LOCATION_LEN 111
-#define PM_HISTORY_VERSION 9
-#define PM_HISTORY_VERSION_OLD 9 // Old version currently supported by PA
+
 #define PM_MAX_COMPRESSION_DIVISIONS 32
 #define PM_HISTORY_STHFILE_LEN 15 // the exact length of the filename, not full path
 
@@ -735,22 +754,21 @@ typedef struct PmCompositePort_s {
 			Reserved:10)
 		} s;
 	} u;
-	STL_LID_32 neighborLid;
+	STL_LID neighborLid;
 
 	PORT	portNum;
 	PORT	neighborPort;
-	uint8	numVFs;
+	uint8   InternalBitMask;
 	uint8	numGroups;
 	uint8	groups[PM_MAX_GROUPS_PER_PORT];
 
-	uint8   InternalBitMask;
-	uint8   reserved2[3];
+	uint32 numVFs;
 	uint32 vlSelectMask;
 
 	CounterSelectMask_t clearSelectMask;
 	uint32 reserved99;
 
-	PmCompositeVfvlmap_t compVfVlmap[MAX_VFABRICS];
+	PmCompositeVfvlmap_t compVfVlmap[MAX_PM_COMP_VFABRICS];
 
 	PmCompositePortCounters_t	stlPortCounters;
 	PmCompositeVLCounters_t	stlVLPortCounters[MAX_PM_VLS];
@@ -759,40 +777,27 @@ typedef struct PmCompositePort_s {
 } PACK_SUFFIX PmCompositePort_t;
 
 typedef struct PmCompositeNode_s {
-	uint64	guid;
-	char nodeDesc[STL_NODE_DESCRIPTION_ARRAY_SIZE];
-	uint16	lid;
-	uint8	nodeType;
-	uint8	numPorts;
-	uint32	reserved;
+	uint64				NodeGUID;
+	uint64				SystemImageGUID;
+	char				nodeDesc[STL_NODE_DESCRIPTION_ARRAY_SIZE];
+	STL_LID 			lid;
+	uint8				nodeType;
+	uint8				numPorts;
+
+	uint8				Reserved;
+
+	uint8				reserved;
 	PmCompositePort_t	**ports;
 } PACK_SUFFIX PmCompositeNode_t;
 
 typedef struct PmCompositeVF_s {
-	char	name[MAX_VFABRIC_NAME];
-	uint32	numPorts;
-	uint8	isActive;
-	uint8	minIntRate;
-	uint8	maxIntRate;
-	uint8	reserved;
-	PmUtilStats_t	intUtil;
-	PmErrStats_t	intErr;
+	char  name[MAX_VFABRIC_NAME];
+	uint8 isActive;
+	uint8 reserved[7];
 } PACK_SUFFIX PmCompositeVF_t;
 
 typedef struct PmCompositeGroups_s {
-	char	name[STL_PM_GROUPNAMELEN];
-	uint32	numIntPorts;
-	uint32	numExtPorts;
-	uint8	minIntRate;
-	uint8	maxIntRate;
-	uint8	minExtRate;
-	uint8	maxExtRate;
-	uint32	reserved;
-	PmUtilStats_t	intUtil;
-	PmUtilStats_t	sendUtil;
-	PmUtilStats_t	recvUtil;
-	PmErrStats_t	intErr;
-	PmErrStats_t	extErr;
+	char name[STL_PM_GROUPNAMELEN];
 } PACK_SUFFIX PmCompositeGroup_t;
 
 typedef struct PmHistoryHeaderCommon_s {
@@ -815,6 +820,18 @@ typedef struct PmFileHeader_s {
 	uint64	divisionSizes[PM_MAX_COMPRESSION_DIVISIONS];
 } PACK_SUFFIX PmFileHeader_t;
 
+typedef struct PmCompositeSmInfo_s {
+	STL_LID	smLid;			// implies port, 0 if empty record
+#if CPU_BE
+	uint8		priority:4;		// present priority
+	uint8		state:4;		// present state
+#else
+	uint8		state:4;
+	uint8		priority:4;
+#endif
+	uint8		reserved[3];
+} PACK_SUFFIX PmCompositeSmInfo_t;
+
 typedef struct PmCompositeImage_s {
 	PmFileHeader_t	header;
 	uint64	sweepStart;
@@ -835,24 +852,13 @@ typedef struct PmCompositeImage_s {
 	uint32	numGroups;
 	uint32	numVFs;
 	uint32	numVFsActive;
-	uint32	maxLid;
+	STL_LID	maxLid;
 	uint32	numPorts;
-	struct PmCompositeSmInfo {
-		uint16	smLid;			// implies port, 0 if empty record
-#if CPU_BE
-		uint8	priority:4;		// present priority
-		uint8	state:4;		// present state
-#else
-		uint8	state:4;
-		uint8	priority:4;
-#endif
-		uint8	reserved;
-	} SMs[PM_HISTORY_MAX_SMS_PER_COMPOSITE];
-	uint32	reserved3;
-	PmCompositeGroup_t	allPortsGroup;
-	PmCompositeGroup_t	groups[PM_MAX_GROUPS];
-	PmCompositeVF_t		VFs[MAX_VFABRICS];
-	PmCompositeNode_t	**nodes;
+	PmCompositeSmInfo_t SMs[PM_HISTORY_MAX_SMS_PER_COMPOSITE];
+	uint32  reserved3;
+	PmCompositeGroup_t  groups[PM_MAX_GROUPS];
+	PmCompositeVF_t     VFs[MAX_PM_COMP_VFABRICS];
+	PmCompositeNode_t   **nodes;
 } PACK_SUFFIX PmCompositeImage_t;
 
 #define INDEX_NOT_IN_USE 0xffffffff
@@ -881,9 +887,6 @@ typedef struct PmShortTermHistory_s {
 	PmCompositeImage_t *cachedComposite;
 	struct _loaded_image {	
 		PmImage_t *img;
-		PmGroup_t *AllGroup;
-		PmGroup_t *Groups[PM_MAX_GROUPS];
-		PmVF_t *VFs[MAX_VFABRICS];
 	} LoadedImage;
 	char	**invalidFiles; // keeps track of history filenames with a version mismatch
 	uint32	oldestInvalid; // index of the oldest invalid file
@@ -910,17 +913,6 @@ typedef struct Pm_s {
 	Lock_t			totalsLock;	// a RWTHREAD_LOCK.
 							// Protects: PmPort_t.PortCountersTotal
 
-	// group per Image data protected by Pm.Image[].imageLock
-	// other group data is not changing and hence no lock needed
-	PmGroup_t *AllPorts;	// default group including all ports
-	// user configured list of groups
-	uint8 NumGroups;		// how many of list below are configured/valid
-	PmGroup_t *Groups[PM_MAX_GROUPS];
-
-	uint8 numVFs;
-	uint8 numVFsActive;
-	PmVF_t *VFs[MAX_VFABRICS];
-
 	// these are look aside buffers to translate from a ImageId to an ImageIndex
 	uint32 *history;			// exclusively for HISTORY
 	uint32 *freezeFrames;		// exclusively for FREEZE_FRAME
@@ -943,7 +935,7 @@ typedef struct Pm_s {
 
 	// keep these as scratch area for use by current sweep, not kept per image
 	// private to engine thread, not protected by lock
-	uint16		pm_slid;	// SLID for packets we send
+	STL_LID 	pm_slid;	// SLID for packets we send
 	uint32		changed_count;	// last pass synchronized topology with SM
 	uint32 		SweepIndex;	// sweep in progress, no lock needed
 	cl_qmap_t	AllNodes;	// all PmNode_t keyed by portGuid, engine use only
@@ -957,7 +949,7 @@ typedef struct Pm_s {
 		generic_cntxt_t cntx;
 		Event_t sweepDone;
 		uint8	postedEvent;			// have we posted the sweepDone event
-		uint16	nextLid;
+		STL_LID	nextLid;
 		uint16	numOutstandingNodes;	// num nodes in Dispatcher.Nodes
 		PmDispatcherNode_t *DispNodes;	// allocated array of PmMaxParallelNodes
 	} Dispatcher;
@@ -965,88 +957,10 @@ typedef struct Pm_s {
 	PmShortTermHistory_t ShortTermHistory;
 
 	// must be last in structure so can dynamically size total images in future
-	 PmImage_t *Image;
+	PmImage_t *Image;
 } Pm_t;
 
 
-static __inline
-void
-BSWAP_PM_BUCKET(pm_bucket_t *Dest, uint32 numBuckets)
-{
-#if CPU_LE
-	uint32 i;
-
-	for (i = 0; i < numBuckets; i++)
-		Dest[i] = ntoh32(Dest[i]);
-#endif
-}	// End of BSWAP_PM_BUCKET
-
-static __inline
-void
-BSWAP_PM_UTIL_STATS(PmUtilStats_t *Dest)
-{
-#if CPU_LE
-	Dest->TotMBps = ntoh64(Dest->TotMBps);
-	Dest->TotKPps = ntoh64(Dest->TotKPps);
-	Dest->AvgMBps = ntoh32(Dest->AvgMBps);
-	Dest->MinMBps = ntoh32(Dest->MinMBps);
-	Dest->MaxMBps = ntoh32(Dest->MaxMBps);
-	BSWAP_PM_BUCKET(Dest->BwPorts, STL_PM_UTIL_BUCKETS);
-	Dest->AvgKPps = ntoh32(Dest->AvgKPps);
-	Dest->MinKPps = ntoh32(Dest->MinKPps);
-	Dest->MaxKPps = ntoh32(Dest->MaxKPps);
-	Dest->pmaNoRespPorts = ntoh16(Dest->pmaNoRespPorts);
-	Dest->topoIncompPorts = ntoh16(Dest->topoIncompPorts);
-#endif
-}	// End of BSWAP_PM_UTIL_STATS
-
-static __inline
-void
-BSWAP_PM_ERROR_SUMMARY(ErrorSummary_t *Dest, uint32 numErrors)
-{
-#if CPU_LE
-	uint32 i;
-
-	for (i = 0; i < numErrors; i++) {
-		Dest[i].Integrity = ntoh32(Dest[i].Integrity);
-		Dest[i].Congestion = ntoh32(Dest[i].Congestion);
-		Dest[i].SmaCongestion = ntoh32(Dest[i].SmaCongestion);
-		Dest[i].Bubble = ntoh32(Dest->Bubble);
-		Dest[i].Security = ntoh32(Dest[i].Security);
-		Dest[i].Routing = ntoh32(Dest[i].Routing);
-		Dest[i].UtilizationPct10 = ntoh16(Dest[i].UtilizationPct10);
-		Dest[i].DiscardsPct10 = ntoh16(Dest[i].DiscardsPct10);
-	}
-#endif
-}	// End of BSWAP_PM_ERROR_SUMMARY
-
-static __inline
-void
-BSWAP_PM_ERROR_BUCKET(ErrorBucket_t *Dest, uint32 numBuckets)
-{
-#if CPU_LE
-	uint32 i;
-
-	for (i = 0; i < numBuckets; i++) {
-		BSWAP_PM_BUCKET(&Dest[i].Integrity, 1);
-		BSWAP_PM_BUCKET(&Dest[i].Congestion, 1);
-		BSWAP_PM_BUCKET(&Dest[i].SmaCongestion, 1);
-		BSWAP_PM_BUCKET(&Dest[i].Bubble, 1);
-		BSWAP_PM_BUCKET(&Dest[i].Security, 1);
-		BSWAP_PM_BUCKET(&Dest[i].Routing, 1);
-	}
-#endif
-}	// End of BSWAP_PM_ERROR_BUCKET
-
-static __inline
-void
-BSWAP_PM_ERR_STATS(PmErrStats_t *Dest)
-{
-#if CPU_LE
-	BSWAP_PM_ERROR_SUMMARY(&Dest->Max, 1);
-	BSWAP_PM_ERROR_BUCKET(Dest->Ports, STL_PM_CATEGORY_BUCKETS);
-#endif
-}	// End of BSWAP_PM_ERR_STATS
 
 static __inline
 void
@@ -1093,6 +1007,8 @@ BSWAP_PM_COMPOSITE_PORT_COUNTERS(PmCompositePortCounters_t *Dest)
 	Dest->FMConfigErrors = ntoh64(Dest->FMConfigErrors);
 	Dest->LinkErrorRecovery = ntoh32(Dest->LinkErrorRecovery);
 	Dest->LinkDowned = ntoh32(Dest->LinkDowned);
+
+
 #endif
 }	// End of BSWAP_PM_COMPOSITE_PORT_COUNTERS
 
@@ -1161,59 +1077,26 @@ BSWAP_PM_COMPOSITE_NODE(PmCompositeNode_t *Dest, uint32 numNodes)
 
 	for (i = 0; i < numNodes; i++) {
 		numPorts = (cnode->nodeType == STL_NODE_SW ? cnode->numPorts+1 : cnode->numPorts);
-		cnode->guid = ntoh64(cnode->guid);
-		cnode->lid = ntoh16(cnode->lid);
+		cnode->NodeGUID = ntoh64(cnode->NodeGUID);
+		cnode->SystemImageGUID = ntoh64(cnode->SystemImageGUID);
+		cnode->lid = ntoh32(cnode->lid);
 		BSWAP_PM_COMPOSITE_PORT((PmCompositePort_t *)&cnode->ports, numPorts);
 		// Calc address of next (flattened) composite node
 		cnode = (PmCompositeNode_t *)((size_t)cnode
-			+ (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t **))
-			+ (sizeof(PmCompositePort_t) * numPorts));
+				+ (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t **))
+				+ (sizeof(PmCompositePort_t) * numPorts));
 	}
 #endif
 }	// End of BSWAP_PM_COMPOSITE_NODE
 
 static __inline
 void
-BSWAP_PM_COMPOSITE_VF(PmCompositeVF_t *Dest, uint32 numVFs)
-{
-#if CPU_LE
-	uint32 i;
-
-	for (i = 0; i < numVFs; i++) {
-		Dest[i].numPorts = ntoh32(Dest[i].numPorts);
-		BSWAP_PM_UTIL_STATS(&Dest[i].intUtil);
-		BSWAP_PM_ERR_STATS(&Dest[i].intErr);
-	}
-#endif
-}	// End of BSWAP_PM_COMPOSITE_VF
-
-static __inline
-void
-BSWAP_PM_COMPOSITE_GROUP(PmCompositeGroup_t *Dest, uint32 numGroups)
-{
-#if CPU_LE
-	uint32 i;
-
-	for (i = 0; i < numGroups; i++) {
-		Dest[i].numIntPorts = ntoh32(Dest[i].numIntPorts);
-		Dest[i].numExtPorts = ntoh32(Dest[i].numExtPorts);
-		BSWAP_PM_UTIL_STATS(&Dest[i].intUtil);
-		BSWAP_PM_UTIL_STATS(&Dest[i].sendUtil);
-		BSWAP_PM_UTIL_STATS(&Dest[i].recvUtil);
-		BSWAP_PM_ERR_STATS(&Dest[i].intErr);
-		BSWAP_PM_ERR_STATS(&Dest[i].extErr);
-	}
-#endif
-}	// End of BSWAP_PM_COMPOSITE_GROUP
-
-static __inline
-void
-BSWAP_PM_COMPOSITE_SM_INFO(struct PmCompositeSmInfo *Dest, uint32 numSMs)
+BSWAP_PM_COMPOSITE_SM_INFO(PmCompositeSmInfo_t *Dest, uint32 numSMs)
 {
 #if CPU_LE
 	uint32 i;
 	for (i = 0; i < numSMs; i++)
-		Dest[i].smLid = ntoh16(Dest[i].smLid);
+		Dest[i].smLid = ntoh32(Dest[i].smLid);
 #endif
 }	// End of BSWAP_PM_COMPOSITE_SM_INFO
 
@@ -1224,7 +1107,7 @@ BSWAP_PM_HISTORY_VERSION(uint32 *Dest)
 #if CPU_LE
 	*Dest = ntoh32(*Dest);
 #endif
-}	// End of BSWAP_PM_HISTORY_VERSION
+}   // End of BSWAP_PM_HISTORY_VERSION
 
 static __inline
 void
@@ -1261,7 +1144,7 @@ BSWAP_PM_FILE_HEADER(PmFileHeader_t *Dest)
 // Byte-swap flattened Composite Image
 static __inline
 void
-BSWAP_PM_COMPOSITE_IMAGE_FLAT(PmCompositeImage_t *Dest, boolean hton, uint32 history_version)
+BSWAP_PM_COMPOSITE_IMAGE_FLAT(PmCompositeImage_t *Dest, boolean hton /*, uint32 historyVersion*/)
 {
 #if CPU_LE
 	uint32 numNodes;
@@ -1293,10 +1176,6 @@ BSWAP_PM_COMPOSITE_IMAGE_FLAT(PmCompositeImage_t *Dest, boolean hton, uint32 his
 	Dest->numVFsActive = ntoh32(Dest->numVFsActive);
 	Dest->numPorts = ntoh32(Dest->numPorts);
 	BSWAP_PM_COMPOSITE_SM_INFO(Dest->SMs, PM_HISTORY_MAX_SMS_PER_COMPOSITE);
-	// Skip BSWAP of Groups and VFs as data is calculated on PA Query
-	// BSWAP_PM_COMPOSITE_GROUP(&Dest->allPortsGroup, 1);
-	// BSWAP_PM_COMPOSITE_GROUP(Dest->groups, PM_MAX_GROUPS);
-	// BSWAP_PM_COMPOSITE_VF(Dest->VFs, MAX_VFABRICS);
 
 	BSWAP_PM_COMPOSITE_NODE(cnodes, numNodes);
 #endif
@@ -1311,11 +1190,11 @@ void PmFreeComposite(PmCompositeImage_t *cimg);
 FSTATUS PmLoadComposite(Pm_t *pm, PmHistoryRecord_t *record, PmCompositeImage_t **cimg);
 FSTATUS PmFreezeComposite(Pm_t *pm, PmHistoryRecord_t *record);
 FSTATUS PmFreezeCurrent(Pm_t *pm);
-PmVF_t *PmReconstituteVFImage(PmCompositeVF_t *cVF);
-PmGroup_t *PmReconstituteGroupImage(PmCompositeGroup_t *cgroup);
-PmPort_t *PmReconstitutePortImage(PmShortTermHistory_t *sth, PmCompositePort_t *cport);
-PmNode_t *PmReconstituteNodeImage(PmShortTermHistory_t *sth, PmCompositeNode_t *cnode);
-PmImage_t *PmReconstituteImage(PmShortTermHistory_t *sth, PmCompositeImage_t *cimg);
+void PmReconstituteVFImage(PmCompositeVF_t *cVF, PmVF_t *pmVFP);
+void PmReconstituteGroupImage(PmCompositeGroup_t *cgroup, PmGroup_t *pmGroupP);
+PmPort_t *PmReconstitutePortImage(PmImage_t *img, PmCompositePort_t *cport);
+PmNode_t *PmReconstituteNodeImage(PmImage_t *img, PmCompositeNode_t *cnode);
+PmImage_t *PmReconstituteImage(PmCompositeImage_t *cimg);
 FSTATUS PmReconstitute(PmShortTermHistory_t *sth, PmCompositeImage_t *cimg);
 
 // Lock Heirachy (acquire in this order):
@@ -1444,21 +1323,23 @@ extern IBhandle_t hpma, pm_fd;
 
 // Lookup a node in pmImage based on lid
 // caller should have pmImage->imageLock held
-PmNode_t *pm_find_node(PmImage_t *pmimagep, STL_LID_32 lid);
+PmNode_t *pm_find_node(PmImage_t *pmimagep, STL_LID lid);
 
 // Lookup a port in pmImage based on lid and portNum
 // does not have to be a "lid"'ed port
 // caller should have pmImage->imageLock held
-PmPort_t *pm_find_port(PmImage_t *pmImage, STL_LID_32 lid, uint8 portNum);
+PmPort_t *pm_find_port(PmImage_t *pmImage, STL_LID lid, uint8 portNum);
+
+// Lookup a node in Pm Topology based on nodeguid
+PmNode_t *pm_find_nodeguid(Pm_t *pm, uint64 nodeGUID);
 
 // Clear Running totals for a given Node.  This simulates a PMA clear so
 // that tools like opareport can work against the Running totals until we
 // have a history feature.
 // caller must have totalsLock held for write
-FSTATUS PmClearNodeRunningCounters(PmNode_t *pmnodep,
-					CounterSelectMask_t select);
-FSTATUS PmClearNodeRunningVFCounters(PmNode_t *pmnodep,
-					STLVlCounterSelectMask select, char *vfName);
+FSTATUS PmClearNodeRunningCounters(PmNode_t *pmnodep, CounterSelectMask_t select);
+FSTATUS PmClearNodeRunningVFCounters(PmNode_t *pmnodep, STLVlCounterSelectMask select,
+	int vfIdx, boolean useHiddenVF);
 
 // in mad_info.c
 void PmUpdateNodePmaCapabilities(PmNode_t *pmnodep, Node_t *nodep, boolean ProcessHFICounters);
@@ -1576,7 +1457,7 @@ void UpdateVFStats(Pm_t *pm, uint32 imageIndex, PmPort_t *port, PmVFImage_t *vfI
 // have a history feature.
 // caller must have totalsLock held for write
 extern FSTATUS PmClearPortRunningCounters(PmPort_t *pmportp, CounterSelectMask_t select);
-extern FSTATUS PmClearPortRunningVFCounters(PmPort_t *pmportp, STLVlCounterSelectMask select, char *vfName);
+extern FSTATUS PmClearPortRunningVFCounters(PmPort_t *pmportp, STLVlCounterSelectMask select, int vfIdx, boolean useHiddenVF);
 
 // ? PMA Counter control allows interval and auto restart of counters, can remove
 // effect of PMA packet delays, etc.  Should we use it?  Does HW support it?
@@ -1594,12 +1475,10 @@ void PmAddPortToGroupIndex(PmPortImage_t* portImage, uint32 grpIndex, PmGroup_t 
 // removes a port from a group. used by other higher level routines
 void PmRemovePortFromGroupIndex(PmPortImage_t* portImage, uint32 grpIndex, PmGroup_t *groupp, uint8 compress);
 
-void PmAddPortToVFIndex(PmPortImage_t * portImage, uint32 vfIndex, PmVF_t *vfp);
-
-boolean PmIsPortInGroup(Pm_t *pm, PmPort_t *pmport, PmPortImage_t *portImage,
-    PmGroup_t *groupp, boolean sth, boolean *isInternal);
-boolean PmIsPortInVF(Pm_t *pm, PmPort_t *pmportp,
-						PmPortImage_t *portImage, PmVF_t *vfp);
+boolean PmIsPortInGroup(PmImage_t *pmimagep, PmPortImage_t *portImage,
+	int groupIndex, boolean isAllGroup, boolean *isInternal);
+boolean PmIsPortInVF(PmImage_t *pmimagep, PmPortImage_t *portImage,
+	int vfIndex);
 
 // adds a port to a group where the neighbor of the port WILL NOT be in
 // the given group

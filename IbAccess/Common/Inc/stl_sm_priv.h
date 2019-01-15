@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -47,6 +47,8 @@ BSWAP_STL_TRAP_CHANGE_CAPABILITY_DATA(STL_TRAP_CHANGE_CAPABILITY_DATA *Src)
 	Src->Lid = ntoh32(Src->Lid);
 	Src->CapabilityMask.AsReg32 = ntoh32(Src->CapabilityMask.AsReg32);
 	Src->CapabilityMask3.AsReg16 = ntoh16(Src->CapabilityMask3.AsReg16);
+
+
 	Src->u.AsReg16 = ntoh16(Src->u.AsReg16);
 #endif
 }
@@ -241,17 +243,7 @@ BSWAPCOPY_STL_DR_SMP(DRStlSmp_t *Src, DRStlSmp_t *Dest)
 	lrp->M_Key = MKEY;							\
 }
 
-// USER ADVICE: Be careful with casting and using the macros below:
-// There exist two versions of stl_get_smp_data:
-//  1: Uses Mai_t* input parameter to be used with MAI API (FM only).
-//  2: Uses STL_SMP* input parameter to be used with tools.
-#define STL_GET_SMP_DATA(MAIP)  ((maip->base.mclass == MAD_CV_SUBN_DR) ?  \
-       ((DRStlSmp_t *)(maip->data))->SMPData : ((LRStlSmp_t *)(maip->data))->SMPData)
-
-#define STL_GET_MAI_KEY(MAIP)  ((maip->base.mclass == MAD_CV_SUBN_DR) ?  \
-       &(((DRStlSmp_t *)(maip->data))->M_Key) : &(((LRStlSmp_t *)(maip->data))->M_Key))
-
-static inline uint8_t *stl_get_smp_data(STL_SMP *smp)
+static __inline uint8_t* stl_get_smp_data(STL_SMP *smp)
 {
 	if (smp->common.MgmtClass == MCLASS_SM_DIRECTED_ROUTE) {
 		return smp->SmpExt.DirectedRoute.SMPData;
@@ -259,7 +251,7 @@ static inline uint8_t *stl_get_smp_data(STL_SMP *smp)
 	return smp->SmpExt.LIDRouted.SMPData;
 }
 
-static inline size_t stl_get_smp_data_size(STL_SMP *smp)
+static __inline size_t stl_get_smp_data_size(STL_SMP *smp)
 {
 	if (smp->common.MgmtClass == MCLASS_SM_DIRECTED_ROUTE) {
 		return STL_MAX_PAYLOAD_SMP_DR;
@@ -267,7 +259,7 @@ static inline size_t stl_get_smp_data_size(STL_SMP *smp)
 	return STL_MAX_PAYLOAD_SMP_LR;
 }
 
-static inline size_t stl_get_smp_header_size(STL_SMP * smp)
+static __inline size_t stl_get_smp_header_size(STL_SMP * smp)
 {
 	return sizeof(STL_SMP) - stl_get_smp_data_size(smp);
 }
@@ -337,7 +329,6 @@ BSWAPCOPY_STL_SMP(STL_SMP *Src, STL_SMP *Dest)
 
 #define STL_BSWAP_SMP_HEADER  BSWAP_STL_SMP_HEADER	/* Temporary definition */
 
-
 static __inline void
 BSWAP_STL_TRAP_PORT_CHANGE_STATE_DATA(STL_TRAP_PORT_CHANGE_STATE_DATA * data)
 {
@@ -390,7 +381,6 @@ if (Src != Dest)
 	BSWAP_STL_NODE_INFO(Dest);
 }
 
-
 static __inline void
 BSWAP_STL_SWITCH_INFO(STL_SWITCH_INFO *Dest)
 {
@@ -413,11 +403,17 @@ static __inline void
 ZERO_RSVD_STL_SWITCH_INFO(STL_SWITCH_INFO * Dest)
 {
 	Dest->Reserved = 0;
+
+	Dest->Reserved24 = 0;
+	Dest->Reserved26 = 0;
+	Dest->Reserved27 = 0;
+
+	Dest->Reserved28 = 0;
 	Dest->Reserved21 = 0;
 	Dest->Reserved22 = 0;
 	Dest->Reserved23 = 0;
 
-	Dest->Reserved24 = 0;
+	Dest->u1.s.Reserved20 = 0;
 
 	Dest->u2.s.Reserved20 = 0;
 	Dest->u2.s.Reserved21 = 0;
@@ -427,6 +423,8 @@ ZERO_RSVD_STL_SWITCH_INFO(STL_SWITCH_INFO * Dest)
 
 	Dest->MultiCollectMask.Reserved = 0;
 	Dest->AdaptiveRouting.s.Reserved = 0;
+	Dest->CapabilityMask.s.Reserved = 0;
+	Dest->CapabilityMaskCollectives.s.Reserved = 0;
 }
 
 static __inline void
@@ -485,8 +483,12 @@ BSWAP_STL_PORT_INFO(STL_PORT_INFO *Dest)
 	Dest->FlitControl.Interleave.AsReg16 = ntoh16(Dest->FlitControl.Interleave.AsReg16);
 	Dest->FlitControl.Preemption.MinInitial = ntoh16(Dest->FlitControl.Preemption.MinInitial);
 	Dest->FlitControl.Preemption.MinTail = ntoh16(Dest->FlitControl.Preemption.MinTail);
+	Dest->MaxLID = ntoh32(Dest->MaxLID);
 	Dest->PortErrorAction.AsReg32 = ntoh32(Dest->PortErrorAction.AsReg32);
 	Dest->M_KeyLeasePeriod = ntoh16(Dest->M_KeyLeasePeriod);
+
+
+
 	Dest->BufferUnits.AsReg32 = ntoh32(Dest->BufferUnits.AsReg32);
 	Dest->MasterSMLID = ntoh32(Dest->MasterSMLID);
 	Dest->M_Key = ntoh64(Dest->M_Key);
@@ -506,6 +508,7 @@ ZERO_RSVD_STL_PORT_INFO(STL_PORT_INFO * Dest)
 	Dest->PortStates.s.Reserved = 0;
 	Dest->PortPhysConfig.s.Reserved = 0;
 	Dest->MultiCollectMask.Reserved = 0;
+	Dest->s2.Reserved = 0;
 	Dest->s1.Reserved = 0;
 	Dest->s3.Reserved20 = 0;
 	Dest->s3.Reserved21 = 0;
@@ -518,16 +521,21 @@ ZERO_RSVD_STL_PORT_INFO(STL_PORT_INFO * Dest)
 	Dest->PortMode.s.Reserved2 = 0;
 	Dest->PortMode.s.Reserved3 = 0;
 	Dest->FlitControl.Interleave.s.Reserved = 0;
-	Dest->Reserved13 = 0;
 	Dest->PortErrorAction.s.Reserved = 0;
 	Dest->PortErrorAction.s.Reserved2 = 0;
 	Dest->PortErrorAction.s.Reserved3 = 0;
 	Dest->PortErrorAction.s.Reserved4 = 0;
 	Dest->PassThroughControl.Reserved = 0;
 	Dest->BufferUnits.s.Reserved = 0;
+
 	Dest->Reserved14 = 0;
+	Dest->BundleNextPort = 0;
+	Dest->BundleLane = 0;
 	// Reserved fields in the RO section
+	Dest->Reserved27 = 0;
+	Dest->Reserved28 = 0;
 	Dest->Reserved20 = 0;
+
 	Dest->CapabilityMask.s.CmReserved6 = 0;
 	Dest->CapabilityMask.s.CmReserved24 = 0;
 	Dest->CapabilityMask.s.CmReserved5 = 0;
@@ -538,14 +546,18 @@ ZERO_RSVD_STL_PORT_INFO(STL_PORT_INFO * Dest)
 	Dest->CapabilityMask.s.CmReserved2 = 0;
 	Dest->CapabilityMask.s.CmReserved20 = 0;
 	Dest->CapabilityMask.s.CmReserved1 = 0;
-	Dest->Reserved20 = 0;
-	Dest->CapabilityMask3.s.CmReserved = 0;
-	Dest->Reserved23 = 0;
-	Dest->Reserved21 = 0;
+	Dest->CapabilityMask3.s.CmReserved0 = 0;
+	Dest->CapabilityMask3.s.CmReserved1 = 0;
+	Dest->CapabilityMask3.s.CmReserved2 = 0;
+	Dest->CapabilityMask3.s.CmReserved3 = 0;
+	Dest->CapabilityMask3.s.CmReserved4 = 0;
 	Dest->PortNeighborMode.Reserved = 0;
 	Dest->MTU.Reserved20 = 0;
 	Dest->Resp.Reserved = 0;
 	Dest->Reserved24 = 0;
+	Dest->Reserved25 = 0;
+
+	Dest->Reserved23 = 0;
 }
 
 static __inline void
@@ -629,7 +641,6 @@ ZERO_RSVD_STL_SCVLMAP(STL_SCVLMAP *Dest)
 		Dest->SCVLMap[i].Reserved = 0;
 	}
 }
-
 /* The section flag refers to which section of STL_VLARB_TABLE
  * is to be swapped (see STL_VLARB_TABLE).  Only the Preemption
  * Matrix section (STL_VLARB_PREEMPT_MATRIX) requires action.
@@ -657,6 +668,28 @@ ZERO_RSVD_STL_VLARB_TABLE(STL_VLARB_TABLE *Dest, uint8 section)
 			Dest->Elements[i].s.Reserved = 0;
 	}
 }
+
+static __inline void
+BSWAP_STL_PORT_SELECTMASK(STL_PORTMASK *Dest)
+{
+#if CPU_LE
+	unsigned int i;
+
+	for (i=0; i<STL_MAX_PORTMASK; i++) {
+		Dest[i] = ntoh64(Dest[i]);
+	}
+#endif
+}
+
+static __inline void
+BSWAP_STL_SCSC_MULTISET(STL_SCSC_MULTISET *Dest)
+{
+#if CPU_LE
+	BSWAP_STL_PORT_SELECTMASK(Dest->IngressPortMask);
+	BSWAP_STL_PORT_SELECTMASK(Dest->EgressPortMask);
+#endif
+}
+
 
 static __inline void
 BSWAP_STL_LINEAR_FORWARDING_TABLE(STL_LINEAR_FORWARDING_TABLE *Dest)
@@ -719,6 +752,7 @@ BSWAP_STL_LED_INFO(STL_LED_INFO *Dest)
 static __inline void
 ZERO_RSVD_STL_LED_INFO(STL_LED_INFO *Dest) {
 
+	Dest->u.s.Reserved = 0;
 	Dest->Reserved2 = 0;
 
 }
@@ -783,7 +817,6 @@ BSWAP_STL_PORT_GROUP_TABLE(STL_PORT_GROUP_TABLE *Dest)
 #endif
 }
 
-
 static __inline void
 BSWAP_STL_BUFFER_CONTROL_TABLE(STL_BUFFER_CONTROL_TABLE *Dest)
 {
@@ -799,7 +832,6 @@ BSWAP_STL_BUFFER_CONTROL_TABLE(STL_BUFFER_CONTROL_TABLE *Dest)
 	}
 #endif
 }
-
 
 static __inline void
 BSWAP_STL_CONGESTION_INFO(STL_CONGESTION_INFO *Dest)

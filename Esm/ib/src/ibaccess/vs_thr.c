@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -215,7 +215,7 @@ impl_vs_thread_create (Thread_t *thr,
 	for (i = 0; i < argc; ++i)
 	{
 	    new_argv[i] = (void *)p;
-	    cs_strlcpy(p, (void *)argv[i], size);
+	    StringCopy(p, (void *)argv[i], size);
 	    p += strlen((void *)argv[i])+1;
 		size -= (strlen((void *)argv[i])+1);
 	}

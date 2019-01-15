@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -34,14 +34,26 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 static __inline__ int
 needs_reregistration(Node_t * nodep, Port_t * portp, pActivationRetry_t retry)
 {
-	if (activation_retry_attempts(retry)) {
-		// on retries, only reregister if pending
+	// general conditions are only checked on first attempt.
+	// on retries, only reregister if it remains pending from previous attempts
+	if (activation_retry_attempts(retry))
 		return portp->portData->reregisterPending;
-	}
 
-	return topology_passcount < 1 // new sm
-		|| sm_find_guid(&old_topology, nodep->nodeInfo.NodeGUID) == NULL // new node
-		|| portp->portData->reregisterPending; // previous attempts haven't yet succeeded
+	// reregister if new sm
+	if (topology_passcount < 1) return TRUE;
+
+	// reregister if previous attempts haven't yet succeeded
+	if (portp->portData->reregisterPending) return TRUE;
+
+	// reregister if node/port is new this sweep
+	Node_t * oldnodep = sm_find_guid(&old_topology, nodep->nodeInfo.NodeGUID);
+	if (!oldnodep) return TRUE;
+	Port_t * oldportp = sm_find_node_port(&old_topology, oldnodep, portp->index);
+	if (!oldportp) return TRUE;
+
+	// reregister if old port was DOWN
+	// (implying we removed its groups/subscriptions)
+	return oldportp->state <= IB_PORT_DOWN;
 }
 
 static void
@@ -95,6 +107,7 @@ sm_arm_port(Topology_t * topop, Node_t * nodep, Port_t * portp)
 	STL_PORT_INFO portInfo;
 	STL_LID dlid;
 	uint32_t madStatus = 0;
+    SmpAddr_t addr;
 
 	IB_ENTER(__func__, topop, nodep, portp, 0);
 
@@ -133,26 +146,23 @@ sm_arm_port(Topology_t * topop, Node_t * nodep, Port_t * portp)
 		return (VSTATUS_OK);
 	}
 
+	// Set the "No change" attributes.
+	sm_portinfo_nop_init(&portInfo);
+
 	portInfo.PortStates.s.PortState = IB_PORT_ARMED;
 	portInfo.LinkDownReason = STL_LINKDOWN_REASON_NONE;
 	portInfo.NeighborLinkDownReason = STL_LINKDOWN_REASON_NONE;
+
 
 	if (sm_is_scae_allowed(nodep))
 		portInfo.PortMode.s.IsActiveOptimizeEnabled = 1;
 
 	//
-	//  Set the "No change" attributes.
-	//
-	portInfo.LinkSpeed.Enabled = 0;
-	portInfo.LinkWidth.Enabled = 0;
-	portInfo.PortStates.s.PortPhysicalState = 0;
-	portInfo.s4.OperationalVL = 0;
-
-	//
 	//  Tell the port its new state.
 	//
-	status = SM_Set_PortInfo_LR(fd_topology, (1 << 24) | (portp->index),
-		sm_lid, dlid, &portInfo, portp->portData->portInfo.M_Key, &madStatus);
+	SMP_ADDR_SET_LR(&addr, sm_lid, dlid);
+	status = SM_Set_PortInfo(fd_topology, (1 << 24) | (portp->index),
+		&addr, &portInfo, portp->portData->portInfo.M_Key, &madStatus);
 
 	if (status != VSTATUS_OK && madStatus != MAD_STATUS_INVALID_ATTRIB) {
 		IB_LOG_WARN_FMT(__func__,
@@ -203,23 +213,174 @@ sm_arm_port(Topology_t * topop, Node_t * nodep, Port_t * portp)
 	return (status);
 }
 
-static Status_t
+static Port_t *
+sm_arm_switch(Topology_t *topop, Node_t *switchp)
+{
+	Port_t *swportp, *portp;
+	STL_LID dlid;
+	const size_t blockSize = sizeof(STL_AGGREGATE) + 8*((sizeof(STL_PORT_INFO) + 7)/8) ;
+	const size_t portsPerAggr = STL_MAX_PAYLOAD_SMP_LR / blockSize;
+	uint8_t buffer[STL_MAX_PAYLOAD_SMP_LR] = {0};
+	STL_AGGREGATE *aggrHdr = (STL_AGGREGATE*)buffer;
+	uint8_t resetIndex = 0;
+	uint8_t enqueued = 0;
+	Status_t status;
+
+	if (!sm_valid_port(swportp = sm_get_port(switchp, 0))) {
+		IB_LOG_WARN_FMT(__func__, "Failed to get Port 0 of Switch " FMT_U64,
+						switchp->nodeInfo.NodeGUID);
+		return swportp;
+	}
+	dlid = swportp->portData->lid;
+
+	for_all_ports(switchp, portp) {
+		STL_PORT_INFO *pPortInfo = (STL_PORT_INFO*)aggrHdr->Data;
+
+		if (sm_valid_port(portp) && !(portp->portData->neighborQuarantined)) {
+			if (portp->state != IB_PORT_INIT) {
+				if (portp->state == IB_PORT_DOWN && portp->portData->linkPolicyViolation) {
+					//port marked down administratively for link policy violation but real port state
+					//should still be in init, so set linkInitReason here
+					sm_set_linkinit_reason(switchp, portp, STL_LINKINIT_OUTSIDE_POLICY);
+					sm_enable_port_led(switchp, portp, TRUE);
+				}
+
+			} else {
+				aggrHdr->AttributeID = STL_MCLASS_ATTRIB_ID_PORT_INFO;
+				aggrHdr->Result.s.Error = 0;
+				aggrHdr->Result.s.Reserved = 0;
+				aggrHdr->Result.s.RequestLength = (sizeof(STL_PORT_INFO) + 7)/8;
+
+				aggrHdr->AttributeModifier =  (1<<24) | (uint32_t)portp->index;
+
+				*pPortInfo = portp->portData->portInfo;
+
+				// Set the "No change" attributes.
+				sm_portinfo_nop_init(pPortInfo);
+
+				pPortInfo->PortStates.s.PortState = IB_PORT_ARMED;
+				pPortInfo->LinkDownReason = STL_LINKDOWN_REASON_NONE;
+				pPortInfo->NeighborLinkDownReason = STL_LINKDOWN_REASON_NONE;
+				pPortInfo->PortStates.s.LEDEnabled = 0;
+
+				if (sm_is_scae_allowed(switchp))
+					pPortInfo->PortMode.s.IsActiveOptimizeEnabled = 1;
+
+				BSWAP_STL_PORT_INFO(pPortInfo);
+				aggrHdr = STL_AGGREGATE_NEXT(aggrHdr);
+
+				if (enqueued++ < 1)
+					resetIndex = portp->index;
+			}
+		}
+
+		// Send out the Aggregate.
+		if ((enqueued > 0) &&
+			(portp->index == switchp->nodeInfo.NumPorts || (enqueued == portsPerAggr))) {
+			uint32_t madStatus = 0;
+			STL_AGGREGATE *lastSeg = NULL;
+
+			status = SM_Set_Aggregate_LR(fd_topology, (STL_AGGREGATE*)buffer,
+				aggrHdr, sm_lid, dlid, sm_config.mkey, &lastSeg, &madStatus);
+
+			// Process the results
+			if (lastSeg) {
+				for (aggrHdr = (STL_AGGREGATE*)buffer; aggrHdr < lastSeg; aggrHdr = STL_AGGREGATE_NEXT(aggrHdr)) {
+					Port_t *retPort;
+
+					retPort = sm_get_port(switchp, aggrHdr->AttributeModifier & 0xff);
+					if (!retPort) {
+						IB_LOG_ERROR_FMT(__func__, "Invalid port number in Set(PortInfo) response for node %s",
+										sm_nodeDescString(switchp));
+						continue;
+					}
+
+					pPortInfo = (STL_PORT_INFO*)aggrHdr->Data;
+
+					// Aggregate fails, re-process this port the old fashion way.
+					if (aggrHdr->Result.s.Error) {
+						IB_LOG_ERROR_FMT(__func__, "Error on Set(Aggregate) of PortInfo for port %d of node %s",
+										retPort->index, sm_nodeDescString(switchp));
+						// All following Set(PortInfo) in the aggregate weren't processed. Rebuild aggregate from port following failure.
+						portp = retPort;
+						break;
+					}
+					BSWAP_STL_PORT_INFO(pPortInfo);
+
+
+					// Some error cases that allow us to continue working on the Aggregate, but should be handled (taken from sm_activate_port)
+					if (pPortInfo->PortStates.s.PortState != IB_PORT_ARMED && pPortInfo->PortStates.s.NeighborNormal != 0) {
+						IB_LOG_WARN_FMT(__func__, "Arm port for node %s guid " FMT_U64" port %d failed",
+										sm_nodeDescString(switchp), switchp->nodeInfo.NodeGUID, retPort->index);
+
+						// limit resweeps, if a device consistently can't be activated, it may
+						// have a HW or config issue
+						if (++retPort->portData->numFailedActivate <= ACTIVATE_RETRY_LIMIT)
+							sm_request_resweep(1, 1, SM_SWEEP_REASON_ACTIVATE_FAIL);
+
+						continue;
+					}
+
+					if (!sm_eq_XmitQ(pPortInfo->XmitQ, retPort->portData->portInfo.XmitQ, STL_MAX_VLS)) {
+						IB_LOG_ERROR_FMT(__func__,
+										 "XmitQ requested/response value mismatch for node %s guid " FMT_U64
+										 " port %d", sm_nodeDescString(switchp), switchp->nodeInfo.NodeGUID,
+										 retPort->index);
+						continue;
+					}
+
+
+					retPort->state = pPortInfo->PortStates.s.PortState;
+					retPort->portData->portInfo = *pPortInfo;
+					if (retPort->state == IB_PORT_ACTIVE)
+						retPort->portData->numFailedActivate = 0;
+
+
+					sm_enable_port_led(switchp, retPort, FALSE);
+					bitset_clear(&switchp->initPorts, retPort->index);
+				}
+			} else {
+				// Aggregate fell flat on it's face. Reset the port pointer, we'll build another one
+				// from the next port.
+				IB_LOG_ERROR_FMT(__func__, "Error on Set(Aggregate) for Node "FMT_U64 ":%s, status = %d",
+								switchp->nodeInfo.NodeGUID, sm_nodeDescString(switchp), status);
+				portp = sm_get_port(switchp, resetIndex);
+			}
+
+			// ARM this port manually if we had Aggregate troubles.
+			if (!lastSeg || aggrHdr->Result.s.Error) {
+				if (sm_valid_port(portp) && sm_arm_port(topop, switchp, portp) != VSTATUS_OK) {
+					IB_LOG_ERROR_FMT(__func__, "TT(ta): can't ARM switch %s nodeGuid "FMT_U64" node index %d port index %d",
+									sm_nodeDescString(switchp), switchp->nodeInfo.NodeGUID, switchp->index, portp->index);
+					sm_enable_port_led(switchp, portp, TRUE);
+				}
+			}
+
+			aggrHdr = (STL_AGGREGATE*)buffer;
+			enqueued = 0;
+		}
+	}
+
+	// NULL = Success
+	return NULL;
+}
+
+Status_t
 sm_activate_port(Topology_t * topop, Node_t * nodep, Port_t * portp,
 	uint8_t forceReregister, pActivationRetry_t retry)
 {
-	Status_t status;
+	Status_t status = VSTATUS_OK;
 	STL_PORT_INFO portInfo;
-	uint16_t dlid;
+	STL_LID dlid;
 	uint32_t madStatus = 0;
 	int reregisterable = TRUE;
+    SmpAddr_t addr;
 
 	IB_ENTER(__func__, topop, nodep, portp, forceReregister);
 
 	//do not try to activate ports connected to quarantined nodes
-	if(portp->portData->neighborQuarantined) {
-		IB_EXIT(__func__, VSTATUS_OK);
+	if(portp->portData->neighborQuarantined)
 		return VSTATUS_OK;
-	}
 
 	if (nodep->nodeInfo.NodeType == NI_TYPE_SWITCH) {
 		Port_t *swportp;
@@ -256,40 +417,29 @@ sm_activate_port(Topology_t * topop, Node_t * nodep, Port_t * portp,
 			// re-register any multicast groups. This might be because the FM was
 			// restarted or because the node just appeared in the fabric and
 			// ActiveOptimize is enabled.
-			portInfo.Subnet.ClientReregister = 1;
+
 			// Indicate that reregistration is pending; will persist across
 			// sweeps until it succeeds or is no longer required (e.g. state change)
 			portp->portData->reregisterPending = 1;
-			if (smDebugPerf) {
-				IB_LOG_VERBOSE_FMT(__func__,
-					"Setting ClientReregister bit in portInfo of node %s nodeGuid "FMT_U64" port %u",
-					sm_nodeDescString(nodep), nodep->nodeInfo.NodeGUID, portp->index);
-			}
-		} else {
-			// If the port is already active and we don't need to re-register
-			// MC groups, we don't need to actually send the MAD.
-			portp->state = portInfo.PortStates.s.PortState;
-			portp->portData->numFailedActivate = 0;
-			IB_EXIT(__func__, VSTATUS_OK);
-			return (VSTATUS_OK);
 		}
+		// If the port is already active, we don't need to actually send the MAD.
+		portp->state = portInfo.PortStates.s.PortState;
+		portp->portData->numFailedActivate = 0;
+		IB_EXIT(__func__, VSTATUS_OK);
+		return (VSTATUS_OK);
 	}
+
+	// Set the "No change" attributes.
+	sm_portinfo_nop_init(&portInfo);
 
 	portInfo.PortStates.s.PortState = IB_PORT_ACTIVE;
 
 	//
-	//  Set the "No change" attributes.
-	//
-	portInfo.LinkSpeed.Enabled = 0;
-	portInfo.LinkWidth.Enabled = 0;
-	portInfo.PortStates.s.PortPhysicalState = 0;
-	portInfo.s4.OperationalVL = 0;
-
-	//
 	//  Tell the port its new state.
 	//
-	status = SM_Set_PortInfo_LR(fd_topology, (1 << 24) | (portp->index),
-		sm_lid, dlid, &portInfo, portp->portData->portInfo.M_Key, &madStatus);
+    SMP_ADDR_SET_LR(&addr, sm_lid, dlid);
+	status = SM_Set_PortInfo(fd_topology, (1 << 24) | (portp->index),
+		&addr, &portInfo, portp->portData->portInfo.M_Key, &madStatus);
 
 	if (status != VSTATUS_OK && madStatus != MAD_STATUS_INVALID_ATTRIB) {
 		IB_LOG_WARN_FMT(__func__,
@@ -299,10 +449,6 @@ sm_activate_port(Topology_t * topop, Node_t * nodep, Port_t * portp,
 		IB_EXIT(__func__, status);
 		return (status);
 	}
-
-	// reset the pending reregistration flag as appropriate
-	if (status == VSTATUS_OK || portInfo.PortStates.s.PortState != IB_PORT_ACTIVE)
-		portp->portData->reregisterPending = 0;
 
 	// check for failures to activate
 	if (portInfo.PortStates.s.PortState != IB_PORT_ACTIVE) {
@@ -571,23 +717,27 @@ sm_arm_node(Topology_t * topop, Node_t * nodep)
 	Status_t status = VSTATUS_OK;
 	Port_t *portp;
 
-	for_all_ports(nodep, portp) {
-		if (sm_valid_port(portp) && portp->state == IB_PORT_INIT) {
-			status = sm_arm_port(sm_topop, nodep, portp);
-			if (status != VSTATUS_OK) {
-				IB_LOG_ERROR_FMT(__func__, "TT(ta): can't ARM node %s nodeGuid "FMT_U64" node index %d port index %d",
-					   sm_nodeDescString(nodep), nodep->nodeInfo.NodeGUID, nodep->index, portp->index);
+	if (nodep->nodeInfo.NodeType == NI_TYPE_SWITCH && sm_config.use_aggregates)  {
+		sm_arm_switch(topop, nodep);
+	} else {
+		for_all_ports(nodep, portp) {
+			if (sm_valid_port(portp) && portp->state == IB_PORT_INIT) {
+				status = sm_arm_port(topop, nodep, portp);
+				if (status != VSTATUS_OK) {
+					IB_LOG_ERROR_FMT(__func__, "TT(ta): can't ARM node %s nodeGuid "FMT_U64" node index %d port index %d",
+									sm_nodeDescString(nodep), nodep->nodeInfo.NodeGUID, nodep->index, portp->index);
+					sm_enable_port_led(nodep, portp, TRUE);
+					if ((status = sm_popo_port_error(&sm_popo, sm_topop, portp, status)) == VSTATUS_TIMEOUT_LIMIT)
+						return status;
+				} else {
+					bitset_clear(&nodep->initPorts, portp->index);
+				}
+			} else if(sm_valid_port(portp) && portp->state == IB_PORT_DOWN && portp->portData->linkPolicyViolation) {
+				//port marked down administratively for link policy violation but real port state
+				//should still be in init, so set linkInitReason here
+				sm_set_linkinit_reason(nodep, portp, STL_LINKINIT_OUTSIDE_POLICY);
 				sm_enable_port_led(nodep, portp, TRUE);
-				if ((status = sm_popo_port_error(&sm_popo, sm_topop, portp, status)) == VSTATUS_TIMEOUT_LIMIT)
-					return status;
-			} else {
-				bitset_clear(&nodep->initPorts, portp->index);
 			}
-		} else if(sm_valid_port(portp) && portp->state == IB_PORT_DOWN && portp->portData->linkPolicyViolation) {
-			// port marked down administratively for link policy violation but real port state
-			// should still be in init, so set linkInitReason here
-			sm_set_linkinit_reason(nodep, portp, STL_LINKINIT_OUTSIDE_POLICY);
-			sm_enable_port_led(nodep, portp, TRUE);
 		}
 	}
 
@@ -640,4 +790,58 @@ sm_activate_all_switch_first(Topology_t * topop, pActivationRetry_t retry)
 			return status;
 
 	return VSTATUS_OK;
+}
+
+static void sm_set_all_reregisters_callback(cntxt_entry_t *cntxt, Status_t status, void *data, Mai_t *mad)
+{
+	Node_t *nodep = (Node_t *)data;
+	Port_t *portp = (nodep ? sm_get_node_end_port(nodep) : NULL);
+	boolean skip = (sm_config.skipAttributeWrite & SM_SKIP_WRITE_PORTINFO ? 1 : 0);
+
+	if (!skip && !sm_callback_check(cntxt, status, nodep, portp, mad)) {
+		// Handle Failure
+	} else if (sm_valid_port(portp)) {
+		portp->portData->reregisterPending = 0;
+	}
+}
+Status_t sm_set_all_reregisters(void)
+{
+	Node_t *nodep;
+	Port_t *portp;
+	Status_t status;
+
+	for_all_nodes(&old_topology, nodep) {
+		portp = sm_get_node_end_port(nodep);
+		if (!sm_valid_port(portp) || portp->state != IB_PORT_ACTIVE) continue;
+		if (!portp->portData->reregisterPending) continue;
+
+		/* Only need to lock the Copy out of the port */
+		(void)vs_rdlock(&old_topology_lock);
+		STL_PORT_INFO pi = portp->portData->portInfo;
+		(void)vs_rwunlock(&old_topology_lock);
+
+		// Set the "No change" attributes.
+		sm_portinfo_nop_init(&pi);
+
+		pi.Subnet.ClientReregister = 1;
+
+		SmpAddr_t addr = SMP_ADDR_CREATE_LR(sm_lid, portp->portData->lid);
+		status = SM_Set_PortInfo_Dispatch(fd_topology, (1 << 24) | portp->index,
+			&addr, &pi, portp->portData->portInfo.M_Key, nodep, &sm_asyncDispatch,
+			sm_set_all_reregisters_callback, nodep);
+		if (status != VSTATUS_OK) {
+			IB_LOG_ERROR_FMT(__func__, "Failed to Send Set Client Reregister on port of node %s nodeGuid "FMT_U64" port %u",
+				sm_nodeDescString(nodep), nodep->nodeInfo.NodeGUID, portp->index);
+		}
+	}
+
+	status = sm_dispatch_wait(&sm_asyncDispatch);
+	if (status != VSTATUS_OK) {
+		sm_dispatch_clear(&sm_asyncDispatch);
+		IB_LOG_INFINI_INFO_FMT(__func__,
+			"Failed to wait on the dispatch queue for Client Reregistration rc: %s",
+			cs_convert_status(status));
+	}
+
+	return status;
 }

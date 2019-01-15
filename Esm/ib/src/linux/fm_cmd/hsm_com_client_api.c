@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -96,8 +96,8 @@ hcom_client_init
 	hdl->trans_id = 1;
 
 
-	cs_strlcpy(hdl->s_path,server_path, HSM_COM_SVR_MAX_PATH);
-	cs_strlcpy(hdl->c_path,client_path, HSM_COM_SVR_MAX_PATH);
+	StringCopy(hdl->s_path,server_path, HSM_COM_SVR_MAX_PATH);
+	StringCopy(hdl->c_path,client_path, HSM_COM_SVR_MAX_PATH);
 
 	if (mkstemp(hdl->c_path) == -1)
 	{
