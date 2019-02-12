@@ -4,7 +4,7 @@ Description: Fix manpage issues
    + NAME values not formatted correctly for lexgrog
 Author: Brian T. Smith <bsmith@systemfabricworks.com>
 Forwarded: no
-Last-Update: <2018-06-23>
+Last-Update: <2018-10-04>
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/Esm/ib/man/opafmcmd.manPage
@@ -42,7 +42,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  Specifies the number of the FM instance to act on.
  
  .IP
- Range = 0 to 7. Default = 0.
+ Range is 0 to 7. Default is 0.
  .TP 10
  cmd [args] 
 -.NL
@@ -94,7 +94,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  Specifies the FM instance number (0-7) to act on.
  
  .IP
- Specify multiple -i options as needed. Default = all instances.
+ Specify multiple -i options as needed. Default is all instances.
  .TP 10
  cmd [args] 
 -.NL
