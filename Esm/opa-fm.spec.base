@@ -106,6 +106,7 @@ __RPM_SYSCONF
 %{_sbindir}/opafmcmd
 %{_sbindir}/opafmcmdall
 %{_sbindir}/opafmconfigpp
+%{_sbindir}/opafmvf
 %{_mandir}/man8/*
 
 %changelog

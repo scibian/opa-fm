@@ -2,7 +2,7 @@ Description: Port sm_capture.sh to Debian
  Use dpkg-query to determine package version. Use base instead of sh.
 Author: Brian T. Smith <bsmith@systemfabricworks.com>=
 Forwarded: no
-Last-Update: <2018-06-23>
+Last-Update: <2019-03-01>
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/Esm/ib/src/linux/startup/sm_capture.sh
@@ -18,7 +18,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
  echo "Getting FM rpm version..."
 +if [ -f /etc/debian_version ] ; then
-+	dpkg-query -W --showformat '${db:Status-Abbrev} ${Package} {$Version}' | egrep 'opa-fm' > $dumpLocation/version
++    dpkg-query -W --showformat '${db:Status-Abbrev} ${Package} ${Version}\n'| egrep ^ii | egrep opa-fm | cut -c5- > $dumpLocation/version
 +else
  rpm -qa|egrep 'opa-fm' > $dumpLocation/version
 +fi

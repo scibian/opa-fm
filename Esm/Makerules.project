@@ -94,6 +94,7 @@ endif
 # We also put the intermediate files for rpm packaging (image and packages)
 # directly in STAGE_DIR
 PROJ_STAGE_DIR		= $(STAGE_DIR)/$(STAGE_SUB_DIR)
+PROJ_STAGE_ETC_DIR	= $(PROJ_STAGE_DIR)/etc
 PROJ_STAGE_BIN_DIR	= $(PROJ_STAGE_DIR)/bin
 PROJ_STAGE_MAN_DIR	= $(PROJ_STAGE_DIR)/man
 PROJ_STAGE_INCLUDE_DIR	= $(PROJ_STAGE_DIR)/include
@@ -122,7 +123,7 @@ BSCPROJ			=
 # strict-prototypes - treat extern int foo() as function with no args
 CPROJ			= -DPRODUCT=$(PRODUCT) -DPRODUCT_$(PRODUCT) -DMODULEVERSION=$(MODULEVERSION)
 # include buildFeatureDefs to let inplace build work for stream consistency
-CPROJ			+= -include $(TL_DIR)/buildFeatureDefs
+CPROJ			+= -include $(TL_DIR)/Fd/buildFeatureDefs
 ifeq ($(IB_STACK),OPENIB)
 CPROJ			+= -DIB_STACK_OPENIB
 else
@@ -135,7 +136,6 @@ CCPROJ			= $(CCNORTTI) $(CCNOEXH) $(CPROJ)
 # DBG and _DEBUG_ are primarily used by IbAccess and modules using it
 CPROJDEBUG		= -DICSDEBUG -DDBG -DIB_DEBUG
 DEPENDPROJ		=
-LDPROJ			= 
 LINTPROJ		=
 MIDLPROJ		=
 RSCPROJ			=

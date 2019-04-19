@@ -89,6 +89,14 @@ then
 	fi
 	sed -i "/__RPM_SYSCONF/,+1d" opa-fm.spec
 	sed -i "s/__RPM_RQ2/Requires: libibumad3, libibverbs1, rdma, libexpat1, openssl/g" opa-fm.spec
+elif [ "$id" = "fedora" ]
+then
+	sed -i "s/__RPM_BLDRQ1/expat-devel, rdma-core-devel, openssl-devel/g" opa-fm.spec
+	sed -i "s/__RPM_BLDRQ2/BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}/g" opa-fm.spec
+	sed -i "s/__RPM_RQ1/Requires: systemd %{?systemd_requires}/g" opa-fm.spec
+	sed -i "/__RPM_SYSCONF/,+1d" opa-fm.spec
+	sed -i "s/__RPM_RQ2/Requires: libibumad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, openssl%{?_isa}/g" opa-fm.spec
+	sed -i "/__RPM_DEBUG/,+1d" opa-fm.spec
 else
 	echo ERROR: Unsupported distribution: $id $versionid
 	exit 1
