@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -141,6 +141,8 @@ fm_mgr_config_init
 			res = FM_CONF_INIT_ERR;
 			goto cleanup;
 		}
+
+
 	}
 
 cleanup:
@@ -232,6 +234,10 @@ fm_mgr_general_query
 	if ( (com_res = hcom_client_send_data(client_hdl,60,&com_dg,&com_dg)) != HSM_COM_OK )
 	{
 		free(dg);
+		if (ret_code)
+		{
+			*ret_code = FM_RET_CONX_CLOSED;
+		}
 		if(com_res == HSM_COM_NOT_CONNECTED)
 		{
 			return FM_CONF_ERR_DISC; 

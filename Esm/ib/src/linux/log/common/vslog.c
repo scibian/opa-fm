@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -42,7 +42,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/stat.h>
 
 #include <limits.h>
-
 #include "ib_types.h"
 #include "ib_status.h"
 #include "cs_g.h"
@@ -119,7 +118,7 @@ vs_log_output(uint32_t sev, /* severity */
 	buffer[sizeof(buffer)-1] = '\0';
 
 	if (vf)
-		sprintf(vfstr, "[VF:%s] ", vf);
+		snprintf(vfstr, sizeof(vfstr), "[VF:%s] ", vf);
 	else
 		*vfstr='\0';
 
@@ -165,6 +164,8 @@ vs_log_output(uint32_t sev, /* severity */
 			   	function?function:"", function?": ":"",
 				buffer);
 	}
+
+
 }
 #endif
 
@@ -496,8 +497,7 @@ vs_log_control(int cmd, void *arg1, void *arg2, void *arg3)
 		 {
 			if((arg1 != NULL) && (strlen((char*)arg1) <= MAX_SYSLOG_NAME))
 			{
-				memset(vs_log_syslog_name,0,sizeof(vs_log_syslog_name));
-				sprintf(vs_log_syslog_name,"%s",(char *)arg1);
+				snprintf(vs_log_syslog_name, sizeof(vs_log_syslog_name), "%s",(char *)arg1);
 			}
 			else
 			{

@@ -4,14 +4,14 @@ Description: Fix manpage issues
    + NAME values not formatted correctly for lexgrog
 Author: Brian T. Smith <bsmith@systemfabricworks.com>
 Forwarded: no
-Last-Update: <2017-11-20>
+Last-Update: <2018-10-04>
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/Esm/ib/man/opafmcmd.manPage
 +++ b/Esm/ib/man/opafmcmd.manPage
 @@ -8,33 +8,33 @@
  
- .TH opafmcmd 8 "Intel Corporation" "Copyright(C) 2015\-2017" "Master map: IFSFFCLIRG (Man Page)" 
+ .TH opafmcmd 8 "Intel Corporation" "Copyright(C) 2015\-2019" "IFSFFCLIRG (Man Page)" 
  .SH NAME
 -opafmcmd
 +opafmcmd \- command line utility
@@ -42,7 +42,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  Specifies the number of the FM instance to act on.
  
  .IP
- Range = 0 to 7. Default = 0.
+ Range is 0 to 7. Default is 0.
  .TP 10
  cmd [args] 
 -.NL
@@ -50,7 +50,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  Specifies the commands and arguments (if applicable) to be run. Values include:
  
  .RS
-@@ -458,7 +458,7 @@
+@@ -472,7 +472,7 @@
  .RE
  
  .SH Example 
@@ -63,7 +63,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 +++ b/Esm/ib/man/opafmcmdall.manPage
 @@ -8,33 +8,33 @@
  
- .TH opafmcmdall 8 "Intel Corporation" "Copyright(C) 2015\-2017" "Master map: IFSFFCLIRG (Man Page)" 
+ .TH opafmcmdall 8 "Intel Corporation" "Copyright(C) 2015\-2019" "IFSFFCLIRG (Man Page)" 
  .SH NAME
 -opafmcmdall
 +opafmcmdall \- command line utility
@@ -91,10 +91,10 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  -i \fIfm\(ulinstance\fR 
 -.NL
 +.BR
- Specifies the number of the FM instance to act on.
+ Specifies the FM instance number (0-7) to act on.
  
  .IP
- Range = 0 to 7. Default = 0.
+ Specify multiple -i options as needed. Default is all instances.
  .TP 10
  cmd [args] 
 -.NL
@@ -102,7 +102,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  Specifies the commands and arguments (if applicable) to be run. Values include:
  
  .RS
-@@ -458,7 +458,7 @@
+@@ -472,7 +472,7 @@
  .RE
  
  .SH Example 

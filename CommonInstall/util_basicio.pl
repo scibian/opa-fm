@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -45,7 +45,7 @@ sub open_log(;$)
 {
 	my($logfile) = shift();
 	if ( "$logfile" eq "" ) {
-		$logfile="$ROOT/var/log/opa.log";
+		$logfile="/var/log/opa.log";
 	}
 	$LogFile = $logfile;
 	open(LOG_FD, ">>$logfile");
@@ -117,7 +117,6 @@ sub getch()
 	system("stty -echo raw");
 	$c=getc(STDIN);
 	system("stty echo -raw");
-	print "\n";
 	return $c;
 }
 
@@ -226,11 +225,6 @@ my %AnswerMemory = ();	# keep track of past answers to yes/no questions
 
 my @AnswerHelp = ();	# help test for each keyword
 
-# process_args and Usage call occurs before source_comp.  So when we put
-# this call in comp.pl, INSTALL has the "built version" of the usage
-# which may be out of sync with the "installed version".  Only impacts questions
-# asked during uninstall, especially for downgrade case, so that is
-# acceptable
 sub AddAnswerHelp($$)
 {
 	my($Keyword) = shift();
@@ -254,9 +248,9 @@ sub showAnswerHelp()
 	 	printf STDERR "            occur during the operation.  answers to questions which are not\n";
 	 	printf STDERR "            asked are ignored.  Invalid answers will result in prompting\n";
 	 	printf STDERR "            for interactive installs or use of the default for non-interactive.\n";
-		printf STDERR "       Possible Questions:\n";
+		printf STDERR "            Possible Questions:\n";
 		foreach my $help (@AnswerHelp) {
-			printf STDERR "         $help\n";
+			printf STDERR "              $help\n";
 		}
 	} else {
 	 	printf STDERR "       --answer keyword=value - presently ignored\n";

@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2018, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -29,14 +29,17 @@
 
 #[ICS VERSION STRING: unknown]
 Name: opa-fm
-Version: 10.6.0.0
-Release: 132%{?dist}
+Version: 10.9.2.0
+Release: 7%{?dist}
+%if 0%{?rhel}
+Epoch: 1
+%endif
 Summary: Intel Omni-Path Fabric Management Software
 
 License: GPLv2 or BSD
-Url: https://github.com/01org/opa-fm
+Url: https://github.com/intel/opa-fm
 # tarball created by:
-# git clone https://github.com/01org/opa-fm.git
+# git clone https://github.com/intel/opa-fm.git
 # cd opa-fm
 # tar czf opa-fm.tar.gz --exclude-cvs .
 Source0: %{name}.tar.gz
@@ -45,24 +48,24 @@ ExclusiveArch: x86_64
 
 Requires: rdma
 
-#BuildRequires: libibverbs-devel >= 1.1-1, libibumad-devel, libibmad-devel
-BuildRequires: expat-devel, libibumad-devel, libibverbs-devel, libibmad-devel, openssl-devel
+BuildRequires: expat-devel, rdma-core-devel, openssl-devel
 
 BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}
 Requires: systemd %{?systemd_requires}
-Requires: libibumad%{?_isa}, libibmad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, openssl%{?_isa}
+Requires: libibumad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, openssl%{?_isa}
 
 %description
 The %{name} contains Intel Omni-Path fabric management applications. This 
 includes: the Subnet Manager, Baseboard Manager, Performance Manager, 
 Fabric Executive, and some fabric management tools.
+IFSComponent: FM 10.9.2.0.7%{?dist}
 
 %prep
 %setup -q -c
 
 %build
 cd Esm
-./fmbuild $BUILD_ARGS
+OPA_FEATURE_SET=opa10 ./fmbuild $BUILD_ARGS
 
 %install
 BUILDDIR=%{_builddir} DESTDIR=%{buildroot} LIBDIR=%{_libdir} RPM_INS=n ./Esm/fm_install.sh
@@ -90,15 +93,22 @@ fi
 
 /usr/lib/systemd/system/opafm.service
 %config(noreplace) %{_sysconfdir}/opa-fm/opafm.xml
+%config(noreplace) %{_sysconfdir}/opa-fm/opafm_pp.xml
+%{_sysconfdir}/opa-fm/vfs
+%{_sysconfdir}/opa-fm/dgs
 /usr/lib/opa-fm/bin/*
 /usr/lib/opa-fm/runtime/*
 /usr/share/opa-fm/*
-/usr/lib/opa/.comp_opafm.pl
 %{_sbindir}/opafmcmd
 %{_sbindir}/opafmcmdall
+%{_sbindir}/opafmconfigpp
+%{_sbindir}/opafmvf
 %{_mandir}/man8/*
 
 %changelog
+* Mon Feb 26 2018 Jijun Wang <jijun.wang@intel.com> - 10.8.0.0
+- Added epoch for RHEL
+- Added component information in description
 * Thu Oct 09 2014 Kaike Wan <kaike.wan@intel.com> - 10.0.0.0-177
 - Initial version 
 

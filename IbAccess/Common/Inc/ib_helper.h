@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT3 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -143,9 +143,6 @@ GetBytesFromMtu(uint8 mtu)
 	switch (mtu)
 	{
 		default:
-#if !defined (VXWORKS)
-		case STL_MTU_0:
-#endif
 			return 0;
 		case IB_MTU_256:
 			return 256;
@@ -169,12 +166,7 @@ GetBytesFromMtu(uint8 mtu)
 static __inline uint8
 GetMtuFromBytes(uint16 bytes)
 {
-#if !defined (VXWORKS)
-	if (! bytes)
-		return STL_MTU_0;
-	else
-#endif
-		 if (bytes <= 256)
+	if (bytes <= 256)
 		return IB_MTU_256;
 	else if (bytes <= 512)
 		return IB_MTU_512;

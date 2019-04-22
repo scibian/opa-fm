@@ -7,7 +7,7 @@
  */
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -16,7 +16,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -161,7 +161,7 @@ set of arguments is passed to the application.
 */
 void Usage(const char *program_name)
 {
-	fprintf(stderr,"\nUsage:     %s [-i][-m marker] release_tag [file ...]\n",program_name);
+	fprintf(stderr,"\nUsage:     %s [-i][-m marker][-n version] release_tag [file ...]\n",program_name);
 	exit(USAGE_ERROR);
 }
 void UsageBrand(const char *program_name)
@@ -552,7 +552,7 @@ on error.  (1=Error in processing, 2=Usage).
 int main(int argc,char* argv[])
 {
 	ApplicationExitcode result=NO_ERROR;
-	const char* version;
+	const char* version = NULL;
 	const char* internalVersion;
 	int position;
 	int numArgs;
@@ -566,7 +566,7 @@ int main(int argc,char* argv[])
   
 	brand = (strcmp(basename(argv[0]), "patch_brand") == 0);
 
-	while ((rc = getopt(argc, argv, "im:")) != -1)
+	while ((rc = getopt(argc, argv, "im:n:")) != -1)
 	{
 		switch (rc)
 		{
@@ -575,6 +575,10 @@ int main(int argc,char* argv[])
 				break;
 			case 'm':
 				marker = optarg[0];
+				break;
+			case 'n':
+				/* Override ParseReleaseTag() functionality by supplying an already-formatted version string. */
+				version = optarg;
 				break;
 			default:
 				break;
@@ -608,7 +612,7 @@ int main(int argc,char* argv[])
 			Usage(argv[0]);
 		}
 
-		if ((version = ParseReleaseTag(argv[optind], dropI)) == NULL)
+		if (version == NULL && (version = ParseReleaseTag(argv[optind], dropI)) == NULL)
 		{
 			exit(USAGE_ERROR);
 		}

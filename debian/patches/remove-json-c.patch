@@ -1,0 +1,21 @@
+Description: Remove json-c dependency
+ The make rules specify a dependency on json-c. But there is no code that
+ uses json-c. Remove the dependency.
+Author: Brian T. Smith <bsmith@systemfabricworks.com>
+Forwarded: no
+Last-Update: <2019-02-19>
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/Esm/ib/src/linux/opamkdsapdb/Makefile
++++ b/Esm/ib/src/linux/opamkdsapdb/Makefile
+@@ -123,8 +123,8 @@
+                      $(TL_DIR)/Topology
+ #LOCALLIBS=  crypto netsnmpagent netsnmpmibs netsnmphelpers netsnmp dl crypto m
+ LOCALLIBS= rt $(OPENIB_USER_LIBS) z crypto expat CodeVersion
+-CLOCAL = $(CPIE) $(shell pkg-config --cflags json-c) 
+-LDLOCAL= $(shell pkg-config --libs json-c) -fopenmp
++CLOCAL = $(CPIE)
++LDLOCAL= -fopenmp
+ LIBFILES= 
+ 
+ VPATH=

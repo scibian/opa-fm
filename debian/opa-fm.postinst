@@ -1,5 +1,4 @@
 #!/bin/sh
-# Copyright (c)2017 System Fabric Works, Inc.
 
 set -e
 

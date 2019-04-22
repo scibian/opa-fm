@@ -1,23 +1,21 @@
 Source: opa-fm
-Maintainer: Scibian Project <packaging@scibian.org>
+Maintainer: Brian T. Smith <bsmith@systemfabricworks.com>
 Section: net
 Priority: extra
 Standards-Version: 3.9.8
 Homepage: http://www.intel.com
-Vcs-Git: https://github.com/scibian/opa-fm.git
-Vcs-Browser: https://github.com/scibian/opa-fm
 Build-Depends: debhelper (>= 10),
                dh-systemd,
                libexpat-dev,
-               libibmad-dev,
-               libibumad-dev,
-               libibverbs-dev,
-               libssl-dev,
+               libibumad-dev (>= 1.3.10.2),
+               libibverbs-dev (>= 1.1.2),
+               libssl-dev (>= 1.0.1),
                zlib1g-dev,
 
 Package: opa-fm
 Architecture: amd64
-Depends: pciutils,
+Depends: libhfi1,
+         pciutils,
          systemd,
          ${misc:Depends},
          ${shlibs:Depends},

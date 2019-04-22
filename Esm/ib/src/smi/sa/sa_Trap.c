@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -68,6 +68,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "iba/stl_sa_priv.h"
 #include "iba/stl_sm_priv.h"
 
+
 static Status_t	sa_Trap_Forward(SubscriberKeyp, STL_NOTICE *);
 
 extern	uint64_t	topology_wakeup_time;
@@ -79,7 +80,7 @@ uint32_t	saTrapCount = 1;// JSY - really need bitmap of unused records
  * desc needs to be a buffer of at least 110 characters
  * This gets and releases the old_topology_lock as part of lookup of the LID
  */
-static void sm_get_lid_info(char *desc, uint16 lid)
+static void sm_get_lid_info(char *desc, STL_LID lid)
 {
 	Node_t	*nodep;
 	Port_t	*portp;
@@ -106,7 +107,7 @@ static void sm_get_lid_info(char *desc, uint16 lid)
 }
 			
 // indicates a sweep is needed
-void sm_discovery_needed(const char* reason, int lid)
+void sm_discovery_needed(const char* reason, STL_LID lid)
 {
 	if (!smFabricDiscoveryNeeded) {
 		if (!lid) {
@@ -122,6 +123,9 @@ void sm_discovery_needed(const char* reason, int lid)
 
 	// Only Trap's call this function.
 	setResweepReason(SM_SWEEP_REASON_TRAP_EVENT);
+
+	// record trap in persistent topology to aid error recovery
+	sm_popo_report_trap(&sm_popo);
 }
 
 //
@@ -134,7 +138,7 @@ Status_t sm_sa_forward_trap (STL_NOTICE * noticep) {
     STL_NOTICE    *noticeToQ=NULL;
 
     if ((status = vs_pool_alloc(&sm_pool, sizeof(STL_NOTICE), (void *)&noticeToQ)) != VSTATUS_OK) {
-		IB_FATAL_ERROR("sm_sa_forward_trap: unable to allocate space for notice");
+		IB_FATAL_ERROR_NODUMP("sm_sa_forward_trap: unable to allocate space for notice");
     } else {
         memcpy((void *)noticeToQ, (void *)noticep, sizeof(STL_NOTICE));
         // queue the request on the SM-SA trap forward request queue
@@ -348,7 +352,7 @@ sa_updateTrapCountForPort(STL_LID lid, uint32_t portIndex, int disable)
 			(void)sm_removedEntities_reportPort(swnodep, swportp,
 			                                    SM_REMOVAL_REASON_TRAP_SUPPRESS);
 			(void)sm_disable_port(&old_topology, swnodep, swportp);
-			sm_discovery_needed("Trap Threshold Exceeded for a Port in Fabric", 0);
+			sm_discovery_needed("Trap Threshold Exceeded for a Port in Fabric", STL_LID_RESERVED);
 		}
 	}
 
@@ -404,6 +408,15 @@ int sa_TrapNeedsLogging(Port_t *portp, uint8_t *trap_count)
 	return 0;
 }
 
+static
+void _copy_CapMaskTrap(Port_t **portp, STL_TRAP_CHANGE_CAPABILITY_DATA *ccTrapRef) {
+	(*portp)->portData->portInfo.CapabilityMask.AsReg32 = ccTrapRef->CapabilityMask.AsReg32;
+	(*portp)->portData->portInfo.CapabilityMask3.AsReg16 = ccTrapRef->CapabilityMask3.AsReg16;
+
+
+}
+
+
 /*
  * Used for forwarding traps that came from the outside.
  * In this case the caller pass the incoming mai packet
@@ -426,7 +439,7 @@ sa_Trap(Mai_t *maip) {
 	IB_ENTER("sa_Trap", maip, 0, 0, 0);
 
 	/* Get the trap type and number */
-    (void)BSWAPCOPY_STL_NOTICE((STL_NOTICE *)STL_GET_SMP_DATA(maip), &notice);
+    (void)BSWAPCOPY_STL_NOTICE((STL_NOTICE *)stl_mai_get_smp_data(maip), &notice);
     tid = maip->base.tid;
 
 	INCREMENT_COUNTER(smCounterTrapsReceived);
@@ -488,8 +501,8 @@ sa_Trap(Mai_t *maip) {
 	}
 
 	/* Send a TrapRepress to the sender after inserting our Mkey */
-    BSWAPCOPY_STL_MKEY(&sm_config.mkey, STL_GET_MAI_KEY(maip));
-	(void)mai_reply(fd_async, maip);
+    BSWAPCOPY_STL_MKEY(&sm_config.mkey, stl_mai_get_mkey(maip));
+	(void)mai_reply(fd_async->fdMai, maip);
 
 	/* Look for subscribers */
 	(void)vs_lock(&saSubscribers.subsLock);
@@ -545,85 +558,92 @@ sa_Trap(Mai_t *maip) {
             IB_LOG_INFINI_INFO_FMT( "sa_Trap", 
                    "Received a PORT STATE CHANGE trap from %s, TID="FMT_U64, desc, tid);
 		}
-		/* Must tell sm_top to re-sweep fabric */
-		sm_discovery_needed("Port State Change Trap", notice.IssuerLID);
+		vs_rdlock(&old_topology_lock);
+		if(topology_passcount > 0) {
+			portp = sm_find_node_and_port_lid(&old_topology, notice.IssuerLID, &nodep);
+			if(sm_flap_report_port_change_trap(&sm_popo, nodep))
+				/* tell sm_top to re-sweep fabric unless trap was generated from flapping port */
+				sm_discovery_needed("Port State Change Trap", notice.IssuerLID);
+		} else {
+			sm_discovery_needed("Port State Change Trap", notice.IssuerLID);
+		}
+		vs_unlock(&old_topology_lock);
+
 	} else if (notice.Attributes.Generic.TrapNumber == MAD_SMT_CAPABILITYMASK_CHANGE) {
 		STL_TRAP_CHANGE_CAPABILITY_DATA ccTrap;
+		STL_TRAP_CHANGE_CAPABILITY_DATA ccTrapRef;
 		
 		BSWAPCOPY_STL_TRAP_CHANGE_CAPABILITY_DATA((STL_TRAP_CHANGE_CAPABILITY_DATA*)notice.Data, &ccTrap);
 		sm_get_lid_info(desc, notice.IssuerLID);
 
 		if (ccTrap.u.AsReg16 == 0) {
-			/* Change fields are zero so one of the capability bits must 
-			 * have changed. Compare the new CapabilityMask to the previous
-			 * CapabalityMask for this port to determine appropriate action
-			 * to take*/
-			(void)vs_wrlock(&old_topology_lock); 
+
+			memcpy(&ccTrapRef, &ccTrap, sizeof(STL_TRAP_CHANGE_CAPABILITY_DATA));
+
+			/* Change fields are zero so one of the capability bits must
+ 			 * have changed. Compare the new CapabilityMask/Mask3 to the previous
+			 * CapabilityMask/Mask3 for this port to determine the appropriate
+			 * action to take*/
+			vs_wrlock(&old_topology_lock);
 			portp = sm_find_node_and_port_lid(&old_topology, notice.IssuerLID, &nodep);
-			if (nodep && sm_valid_port(portp)) { 
-				//determine which bits in Capability Mask changed
+			if (nodep && sm_valid_port(portp)){
+
+				//determine which bits in Capability Mask/Mask3 changed
 				ccTrap.CapabilityMask.AsReg32 ^= portp->portData->portInfo.CapabilityMask.AsReg32;
-				
+				ccTrap.CapabilityMask3.AsReg16 ^= portp->portData->portInfo.CapabilityMask3.AsReg16;
+
+
 				if (ccTrap.CapabilityMask.s.IsSM){ //node's SM status changed, will need to trigger a sweep
-					if (!portp->portData->portInfo.CapabilityMask.s.IsSM){
+					if (ccTrapRef.CapabilityMask.s.IsSM){
 						IB_LOG_INFINI_INFO_FMT(__func__, 
 								"Received an (IS_SM on) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64,
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
-						sm_discovery_needed("Port CapabilityMask Change isSM on", 0);
+								ccTrapRef.CapabilityMask.AsReg32, desc, tid);
+						if (notice.IssuerLID != sm_lid){
+							sm_discovery_needed("Port CapabilityMask Change isSM on", STL_LID_RESERVED);
+						}
 					}else{
 						IB_LOG_INFINI_INFO_FMT(__func__, 
 								"Received an (IS_SM off) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64,
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
-						//don't sweep if it was this sm whose bit was turned off
-						if (notice.IssuerLID != sm_lid){
-							sm_discovery_needed("Port CapabilityMask Change isSM off", 0);
+								ccTrapRef.CapabilityMask.AsReg32, desc, tid);
+						if (notice.IssuerLID != sm_lid){	
+							sm_discovery_needed("Port CapabilityMask Change isSM off", STL_LID_RESERVED);
 						}
-					} 
-				}else{ //other capability bit changed, just get fresh port info
-					STL_PORT_INFO portInfo;
-					Status_t status = SM_Get_PortInfo_LR(fd_async_request, (1 << 24) | portp->index, sm_lid, portp->portData->lid, &portInfo);
-					if (status != VSTATUS_OK){
-						IB_LOG_WARN_FMT(__func__, 
-										"Cannot get PORTINFO for %s, TID="FMT_U64
-										" status=%d", desc, tid, status);
-					}else{
-						portp->portData->portInfo = portInfo;
 					}
 				}
-				/****************LOG WHICH OTHER BIT CHANGED******************/
-				//portp->portData->portInfo contains old information
+
 				if(ccTrap.CapabilityMask.s.IsAutomaticMigrationSupported){
-						IB_LOG_INFINI_INFO_FMT(__func__, 
-								"Received an (IS_AUTOMATIC_MIGRATION_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64,
-								(!portp->portData->portInfo.CapabilityMask.s.IsAutomaticMigrationSupported?"on":"off"),
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
+					IB_LOG_INFINI_INFO_FMT(__func__,
+							"Received an (IS_AUTOMATIC_MIGRATION_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64,
+							(ccTrapRef.CapabilityMask.s.IsAutomaticMigrationSupported?"on":"off"),
+							ccTrapRef.CapabilityMask.AsReg32, desc, tid);
 				}
 				if(ccTrap.CapabilityMask.s.IsConnectionManagementSupported){
-						IB_LOG_INFINI_INFO_FMT(__func__, 
-								"Received an (IS_CONNECTION_MANAGEMENT_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
-								(!portp->portData->portInfo.CapabilityMask.s.IsConnectionManagementSupported?"on":"off"), 
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
+					IB_LOG_INFINI_INFO_FMT(__func__,
+							"Received an (IS_CONNECTION_MANAGEMENT_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
+							(ccTrapRef.CapabilityMask.s.IsConnectionManagementSupported?"on":"off"), 
+							ccTrapRef.CapabilityMask.AsReg32, desc, tid);
 				}
 				if (ccTrap.CapabilityMask.s.IsDeviceManagementSupported){
-						IB_LOG_INFINI_INFO_FMT(__func__, 
-								"Received an (IS_DEVICE_MANAGEMENT_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
-								(!portp->portData->portInfo.CapabilityMask.s.IsDeviceManagementSupported?"on":"off"),
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
+					IB_LOG_INFINI_INFO_FMT(__func__,
+							"Received an (IS_DEVICE_MANAGEMENT_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
+							(ccTrapRef.CapabilityMask.s.IsDeviceManagementSupported?"on":"off"),
+							ccTrapRef.CapabilityMask.AsReg32, desc, tid);
 				}
 				if(ccTrap.CapabilityMask.s.IsVendorClassSupported){
-						IB_LOG_INFINI_INFO_FMT(__func__, 
-								"Received an (IS_VENDOR_CLASS_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
-								(!portp->portData->portInfo.CapabilityMask.s.IsVendorClassSupported?"on":"off"),
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
+					IB_LOG_INFINI_INFO_FMT(__func__,
+							"Received an (IS_VENDOR_CLASS_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
+							(ccTrapRef.CapabilityMask.s.IsVendorClassSupported?"on":"off"),
+							ccTrapRef.CapabilityMask.AsReg32, desc, tid);
 				}
 				if(ccTrap.CapabilityMask.s.IsCapabilityMaskNoticeSupported){
-						IB_LOG_INFINI_INFO_FMT(__func__, 
-								"Received an (IS_CAPABILITY_MASK_NOTICE_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
-								(!portp->portData->portInfo.CapabilityMask.s.IsCapabilityMaskNoticeSupported?"on":"off"),
-								ccTrap.CapabilityMask.AsReg32, desc, tid);
+					IB_LOG_INFINI_INFO_FMT(__func__,
+							"Received an (IS_CAPABILITY_MASK_NOTICE_SUPPORTED %s) CAPABILITYMASK CHANGE [0x%.8X] trap from %s, TID="FMT_U64, 
+							(ccTrapRef.CapabilityMask.s.IsCapabilityMaskNoticeSupported?"on":"off"),
+							ccTrapRef.CapabilityMask.AsReg32, desc, tid);
 				}
+				_copy_CapMaskTrap(&portp, &ccTrapRef);
 			}
-				(void)vs_rwunlock(&old_topology_lock);
+			vs_rwunlock(&old_topology_lock);
 		} else {
 			/* A local change has occurred. */
 			IB_LOG_INFINI_INFO_FMT( "sa_Trap", 
@@ -647,7 +667,7 @@ sa_Trap(Mai_t *maip) {
 				vs_time_get(&old_topology.lastNDTrapTime);
 				(void)vs_rwunlock(&old_topology_lock);
 			}
-			sm_discovery_needed("Port CapabilityMask Change trap with OtherLocalChanges", 0);
+			sm_discovery_needed("Port CapabilityMask Change trap with OtherLocalChanges", STL_LID_RESERVED);
 		}
 	} else if (notice.Attributes.Generic.TrapNumber == MAD_SMT_SYSTEMIMAGEGUID_CHANGE) {
 		uint64_t    sysImageGuid;
@@ -657,7 +677,7 @@ sa_Trap(Mai_t *maip) {
 		IB_LOG_INFINI_INFO_FMT( "sa_Trap", 
 		       "Received a SYSTEMIMAGEGUID CHANGE ["FMT_U64"] trap from %s TID="FMT_U64,
 		       sysImageGuid, desc, tid);
-		sm_discovery_needed("SystemImageGuid changed", 0);
+		sm_discovery_needed("SystemImageGuid changed", STL_LID_RESERVED);
     } else if (notice.Attributes.Generic.TrapNumber == STL_SMA_TRAP_LINK_WIDTH) {
 		(void)vs_wrlock(&old_topology_lock);
 		portp = sm_find_node_and_port_lid(&old_topology, notice.IssuerLID, &nodep);
@@ -669,7 +689,7 @@ sa_Trap(Mai_t *maip) {
                 smCsmFormatNodeId(&csmNodeId, (uint8_t*)sm_nodeDescString(nodep), notice.Data[4],
                                   portp->portData->guid);
                 smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_LINK_ERROR, &csmNodeId, NULL,
-                                "Received a LINKDOWNGRADE trap from LID=0x%.4X TID="FMT_U64,
+                                "Received a LINKDOWNGRADE trap from LID=0x%.8X TID="FMT_U64,
                                 notice.IssuerLID, tid);
                 if (trap_count)
                     IB_LOG_INFINI_INFO_FMT( "sa_Trap", "Received %d other traps from above port since last reported",
@@ -696,7 +716,7 @@ sa_Trap(Mai_t *maip) {
 			if (notice.Attributes.Generic.TrapNumber != MAD_SMT_BAD_PKEY) {
 				if (log) {
 					smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_SECURITY_ERROR, &csmNodeId, NULL,
-				                "Received a %s trap from LID 0x%.4X TID="FMT_U64, 
+				                "Received a %s trap from LID 0x%.8X TID="FMT_U64, 
 				                (notice.Attributes.Generic.TrapNumber == MAD_SMT_BAD_MKEY) ? "BAD MKEY" : 
 				                  ((notice.Attributes.Generic.TrapNumber == MAD_SMT_BAD_QKEY) ? "BAD QKEY" : "BAD PKEY"),
 			    	            notice.IssuerLID, tid);
@@ -709,7 +729,7 @@ sa_Trap(Mai_t *maip) {
 
 				if (log) {
 					smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_SECURITY_ERROR, &csmNodeId, NULL,
-				                "Received a BAD PKEY trap from LID 0x%.4X, PKEY= 0x%x (from LID= 0x%.4x to LID= 0x%.4x) on SL %d (QP1= %d,QP2 =%d) TID="FMT_U64,
+				                "Received a BAD PKEY trap from LID 0x%.8X, PKEY= 0x%x (from LID= 0x%.8x to LID= 0x%.8x) on SL %d (QP1= %d,QP2 =%d) TID="FMT_U64,
 				                notice.IssuerLID, pkeyTrap.Key, pkeyTrap.Lid1, pkeyTrap.Lid2, pkeyTrap.u.s.SL, pkeyTrap.qp1, pkeyTrap.qp2, tid);
 					if (trap_count) 
 							IB_LOG_INFINI_INFO_FMT( "sa_Trap", "Received %d other traps from above port since last reported",
@@ -719,14 +739,14 @@ sa_Trap(Mai_t *maip) {
 		} else {
 			if (notice.Attributes.Generic.TrapNumber != MAD_SMT_BAD_PKEY) {
 				smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_SECURITY_ERROR, NULL, NULL,
-			                "Received a %s trap from LID 0x%.4X TID="FMT_U64, 
+			                "Received a %s trap from LID 0x%.8X TID="FMT_U64, 
 			                (notice.Attributes.Generic.TrapNumber == MAD_SMT_BAD_MKEY) ? "BAD MKEY" :
 			                  ((notice.Attributes.Generic.TrapNumber == MAD_SMT_BAD_QKEY) ? "BAD QKEY" : "BAD PKEY"),
 			                notice.IssuerLID, tid);
 			} else {
                 (void)BSWAPCOPY_STL_TRAP_BAD_KEY_DATA((STL_TRAP_BAD_KEY_DATA *)notice.Data, &pkeyTrap);
 				smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_SECURITY_ERROR, NULL, NULL,
-			                "Received a BAD PKEY trap from LID 0x%.4X, PKEY= 0x%x (from LID= 0x%.4x to LID= 0x%.4x) on SL %d (QP1= %d,QP2 =%d) TID="FMT_U64, 
+			                "Received a BAD PKEY trap from LID 0x%.8X, PKEY= 0x%x (from LID= 0x%.8x to LID= 0x%.8x) on SL %d (QP1= %d,QP2 =%d) TID="FMT_U64, 
 				            notice.IssuerLID, pkeyTrap.Key, pkeyTrap.Lid1, pkeyTrap.Lid2, pkeyTrap.u.s.SL, pkeyTrap.qp1, pkeyTrap.qp2, tid);
 			}
 		}
@@ -742,7 +762,7 @@ sa_Trap(Mai_t *maip) {
 		if (topology_passcount == 0) {
 			// no topology yet, just log notice info
 			IB_LOG_INFINI_INFO_FMT( "sa_Trap", 
-			       "Received a %s trap from LID=0x%.4X, SrcPort=%u TID="FMT_U64, 
+			       "Received a %s trap from LID=0x%.8X, SrcPort=%u TID="FMT_U64, 
 			       name, notice.IssuerLID, notice.Data[4], tid);
 		} else {
 			(void)vs_wrlock(&old_topology_lock);
@@ -755,7 +775,7 @@ sa_Trap(Mai_t *maip) {
 					smCsmFormatNodeId(&csmNeighborId, (uint8_t*)sm_nodeDescString(neighborNodep), neighborExtPortp->index,
 					                  neighborPortp->portData->guid);
 					smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_LINK_ERROR, &csmNodeId, &csmNeighborId, 
-					                "Received a %s trap from LID=0x%.4X TID="FMT_U64, name, notice.IssuerLID, tid);
+					                "Received a %s trap from LID=0x%.8X TID="FMT_U64, name, notice.IssuerLID, tid);
 					if (trap_count) 
 						IB_LOG_INFINI_INFO_FMT( "sa_Trap", "Received %d other traps from above port since last reported",
 								 (trap_count));
@@ -768,7 +788,7 @@ sa_Trap(Mai_t *maip) {
 						smCsmFormatNodeId(&csmNodeId, (uint8_t*)sm_nodeDescString(nodep), notice.Data[4],
 					    	              portp->portData->guid);
 						smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_LINK_ERROR, &csmNodeId, NULL,
-					                	"Received a %s trap from LID=0x%.4X TID="FMT_U64,
+					                	"Received a %s trap from LID=0x%.8X TID="FMT_U64,
 						                name, notice.IssuerLID, tid);
 						if (trap_count)
 							IB_LOG_INFINI_INFO_FMT( "sa_Trap", "Received %d other traps from above port since last reported",
@@ -776,7 +796,7 @@ sa_Trap(Mai_t *maip) {
 					}
 				} else {
 					smCsmLogMessage(CSM_SEV_NOTICE, CSM_COND_LINK_ERROR, NULL, NULL,
-					                "Received a %s trap from LID=0x%.4X TID="FMT_U64,
+					                "Received a %s trap from LID=0x%.8X TID="FMT_U64,
 					                name, notice.IssuerLID, tid);
 				}
 			}
@@ -834,7 +854,7 @@ static Status_t sa_Trap_Forward(SubscriberKeyp subsKeyp, STL_NOTICE * noticep) {
 
 	IB_ENTER("sa_Trap_Forward", subsKeyp, noticep, 0, 0);
 
-	(void)mai_alloc_tid(fd_saTrap, MAD_CV_SUBN_ADM, &tid);
+	(void)mai_alloc_tid(fd_saTrap->fdMai, MAD_CV_SUBN_ADM, &tid);
 
 	INCREMENT_COUNTER(smCounterSaTxReportNotice);
 
@@ -884,14 +904,14 @@ static Status_t sa_Trap_Forward(SubscriberKeyp subsKeyp, STL_NOTICE * noticep) {
 
 
     //IB_LOG_INFINI_INFO_FMT( "sa_Trap_Forward", 
-    //       "Sending notice %d to LID 0x%.4X, ["FMT_U64"]", 
+    //       "Sending notice %d to LID 0x%.8X, ["FMT_U64"]", 
     //      (uint32_t)noticep->Attributes.Generic.TrapNumber, subsKeyp->lid, *(uint64_t *)&subsKeyp->subscriberGid[8]);
 
     // get a context for this report mad
     if ((madcntxt = cs_cntxt_get(&out_mad, &sm_notice_cntxt, FALSE)) == NULL) {
         // could not get a context, send report unreliably
         IB_LOG_WARN0("sa_Trap_Forward: can't allocate a notice context, sending unreliably");
-		if ((status = mai_send(fd_saTrap, &out_mad)) != VSTATUS_OK) {
+		if ((status = mai_send(fd_saTrap->fdMai, &out_mad)) != VSTATUS_OK) {
 			IB_LOG_ERRORRC("sa_Trap_Forward: can't send MAD unreliably rc:", status);
 		}
     } else {

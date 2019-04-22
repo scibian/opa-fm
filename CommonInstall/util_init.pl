@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -46,18 +46,31 @@ my $exit_code=0;
 
 my $Force_Install = 0;# force option used to force install on unsupported distro
 my $GPU_Install = 0;
+my $HFI2_INSTALL = 0; # indicate whether we shall install HFI2
+# When --user-space is selected we are targeting a user space container for
+# installation and will skip kernel modules and firmware
+my $user_space_only = 0; # can be set to 1 by --user-space argument
 
-# some options specific to OFED builds
+# some options specific to OFA builds
 my $OFED_force_rebuild=0;
-my $OFED_user_configure_options="";
-my $OFED_kernel_configure_options="";
-my $OFED_prefix="/usr";
-my $OFED_debug = 0;	# if 1 build a debug version of modules
 
 my $CUR_OS_VER = `uname -r`;
 chomp $CUR_OS_VER;
+
+# related to HFI2_INSTALL. The following code is introduced to help us check b-s-m kernel for HFI2.
+# After we merge HFI2 into ifs-kernel-updates, we shall remove the following.
+my $CUR_OS_VER_SHORT = '';
+if ($CUR_OS_VER =~ /([0-9]+\.[0-9]+)/ ) {
+	$CUR_OS_VER_SHORT=$1;
+} else {
+	die "\n\nKernel version \"${CUR_OS_VER}\" doesn't have an extractable major/minor version!\n\n";
+}
+
+my $RPMS_SUBDIR = "RPMS";
+my $SRPMS_SUBDIR = "SRPMS";
+
 # firmware and data files
-my $OLD_BASE_DIR = "/etc/opa";
+my $OLD_BASE_DIR = "/etc/sysconfig/opa";
 my $BASE_DIR = "/etc/opa";
 # iba editable config scripts
 my $OPA_CONFIG_DIR = "/etc/opa";
@@ -66,8 +79,6 @@ my $UVP_CONF_FILE = "$BASE_DIR/uvp.conf";
 my $UVP_CONF_FILE_SOURCE = "uvp.conf";
 my $DAT_CONF_FILE_SOURCE = "dat.conf";
 my $NETWORK_CONF_DIR = "/etc/sysconfig/network-scripts";
-my $ROOT = "/";	# TBD prepared to make this "" removes some // prompts and logs
-
 my $BIN_DIR = "/usr/sbin";
 
 #This string is compared in verify_os_rev for correct revision of
@@ -77,15 +88,6 @@ my $CUR_VENDOR_VER = "";	# full version (such as ES5.1)
 my $CUR_VENDOR_MAJOR_VER = "";    # just major number part (such as ES5)
 my $ARCH = `uname -m | sed -e s/ppc/PPC/ -e s/powerpc/PPC/ -e s/i.86/IA32/ -e s/ia64/IA64/ -e s/x86_64/X86_64/`;
 chomp $ARCH;
-my $ARCH_VENDOR=`grep vendor_id /proc/cpuinfo | tail -1`;
-chomp $ARCH_VENDOR;
-if ($ARCH eq "X86_64")
-{
-	if ((-f "$ROOT/etc/redhat-release" || -f "$ROOT/etc/rocks-release") && $ARCH_VENDOR =~ /.*GenuineIntel.*/ && substr($CUR_OS_VER,0,3) eq "2.4")
-	{
-		$ARCH = "EM64T";
-	}
-}
 my $DRIVER_SUFFIX=".o";
 if (substr($CUR_OS_VER,0,3) eq "2.6" || substr($CUR_OS_VER,0,2) eq "3.")
 {
@@ -95,11 +97,14 @@ my $DBG_FREE="release";
 
 
 # Command paths
-my $LSPCI = "/sbin/lspci";
-my $RPM="/bin/rpm";
+my $RPM = "/bin/rpm";
 
 # a few key commands to verify exist
-my @verify_cmds = ( "uname", "mv", "cp", "rm", "ln", "cmp", "yes", "echo", "sed", "chmod", "chown", "chgrp", "mkdir", "rmdir", "grep", "diff", "awk", "find", "xargs", "sort", $RPM, "chroot", $LSPCI );
+my @verify_cmds = ( "uname", "mv", "cp", "rm", "ln", "cmp", "yes", "echo", "sed", "chmod", "chown", "chgrp", "mkdir", "rmdir", "grep", "diff", "awk", "find", "xargs", "sort");
+
+# opa-scripts expects the following env vars to be 0 or 1. We set them to the default value here
+setup_env("OPA_INSTALL_CALLER", 0);
+default_opascripts_env_vars();
 
 sub Abort(@);
 sub NormalPrint(@);
@@ -124,6 +129,7 @@ sub check_root_user()
 		die "\n\nYou must be \"root\" to run this install program\n\n";
 	}
 
+	@verify_cmds = (@verify_cmds, rpm_get_cmds_for_verification());
 	# verify basic commands are in path
 	foreach my $cmd ( @verify_cmds ) {
 		if (! check_cmd_exists($cmd)) {
@@ -138,11 +144,6 @@ sub my_tolower($)
 
 	$str =~ tr/[A-Z]/[a-z]/;
 	return "$str";
-}
-
-sub ROOT_is_set()
-{
-	return ("$ROOT" ne "/" && "$ROOT" ne "");
 }
 
 # ============================================================================
@@ -185,7 +186,7 @@ my $OLD_UVP_LIB_DIR = "/lib";
 
 sub set_libdir()
 {
-	if ( -d "$ROOT/lib64" )
+	if ( -d "/lib64" )
 	{
 		$LIB_DIR = "/lib64";
 		$UVP_LIB_DIR = "/lib64";
@@ -207,7 +208,11 @@ sub os_vendor_version($)
 	my $rval = "";
 	my $mn = "";
 	if ( -e "/etc/os-release" ) {
-		$rval=`cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2 | tr -d [\\"\\.0]`;
+		if ($vendor eq "ubuntu") {
+			$rval=`cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2 | tr -d [\\"\\.]`;
+		} else {
+			$rval=`cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2 | tr -d [\\"\\.0]`;
+		}
 		chop($rval);
 		$rval="ES".$rval;
 		if ( -e "/etc/redhat-release" ) {
@@ -290,21 +295,38 @@ sub determine_os_version()
 {
 	# we use the current system to select the distribution
 	# TBD we expect client image for diskless client install to have these files
-	if ( -e "/etc/redhat-release" && !(-l "/etc/redhat-release") ) 
-	{
+	my $os_release_file = "/etc/os-release";
+	if ( -e "/etc/redhat-release" && !(-l "/etc/redhat-release") ) {
 		$CUR_DISTRO_VENDOR = "redhat";
 	} elsif ( -s "/etc/centos-release" ) {
 		$CUR_DISTRO_VENDOR = "redhat";
-	} elsif ( -s "/etc/UnitedLinux-release" ) {          
+	} elsif ( -s "/etc/UnitedLinux-release" ) {
 		$CUR_DISTRO_VENDOR = "UnitedLinux";
 		$NETWORK_CONF_DIR = "/etc/sysconfig/network";
-	} elsif ( -s "/etc/SuSE-release" ) {          
+	} elsif ( -s "/etc/SuSE-release" ) {
 		$CUR_DISTRO_VENDOR = "SuSE";
 		$NETWORK_CONF_DIR = "/etc/sysconfig/network";
 	} elsif ( -e "/usr/bin/lsb_release" ) {
 		$CUR_DISTRO_VENDOR = `/usr/bin/lsb_release -is`;
 		chop($CUR_DISTRO_VENDOR);
-		$CUR_DISTRO_VENDOR = lc($CUR_DISTRO_VENDOR); 
+		$CUR_DISTRO_VENDOR = lc($CUR_DISTRO_VENDOR);
+		if ($CUR_DISTRO_VENDOR eq "suse") {
+			$CUR_DISTRO_VENDOR = "SuSE";
+		}
+	} elsif ( -e $os_release_file) {
+		my %distroVendor = (
+			"rhel" => "redhat",
+			"centos" => "redhat",
+			"sles" => "SuSE"
+		);
+		my %network_conf_dir  = (
+			"rhel" => $NETWORK_CONF_DIR,
+			"centos" => $NETWORK_CONF_DIR,
+			"sles" => "/etc/sysconfig/network"
+		);
+		my $os_id = `cat $os_release_file | grep '^ID=' | cut -d'=' -f2 | tr -d [\\"\\.0] | tr -d ["\n"]`;
+		$CUR_DISTRO_VENDOR = $distroVendor{$os_id};
+		$NETWORK_CONF_DIR = $network_conf_dir{$os_id};
 	} else {
 		# autodetermine the distribution
 		open DISTRO_VENDOR, "ls /etc/*-release|grep -v lsb\|^os 2>/dev/null |"
@@ -321,7 +343,7 @@ sub determine_os_version()
 		}
 		close DISTRO_VENDOR;
 		if ( $CUR_DISTRO_VENDOR eq "" )
-		{            
+		{
 			NormalPrint "Unable to determine current Linux distribution.\n";
 			Abort "Please contact your support representative...\n";
 		} elsif ($CUR_DISTRO_VENDOR eq "SuSE") {
@@ -330,7 +352,6 @@ sub determine_os_version()
 			$CUR_DISTRO_VENDOR = "redhat";
 		}
 	}
-
 	$CUR_VENDOR_VER = os_vendor_version($CUR_DISTRO_VENDOR);
 	$CUR_VENDOR_MAJOR_VER = $CUR_VENDOR_VER;
 	$CUR_VENDOR_MAJOR_VER =~ s/\..*//;	# remove any . version suffix
@@ -406,6 +427,17 @@ sub verify_distrib_files
 			Abort "Please contact your support representative...\n";
 		}
 	}
+}
+
+# set the env vars to their default value, when the first we install opa-scripts, we will have proper configs
+sub default_opascripts_env_vars()
+{
+	setup_env("OPA_UDEV_RULES", 1);
+	setup_env("OPA_LIMITS_CONF", 1);
+	setup_env("OPA_ARPTABLE_TUNING", 1);
+	setup_env("OPA_SRP_LOAD", 0);
+	setup_env("OPA_SRPT_LOAD", 0);
+	setup_env("OPA_IRQBALANCE", 1);
 }
 
 # this will be replaced in component specific INSTALL with any special
