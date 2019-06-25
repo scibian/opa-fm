@@ -1,0 +1,11 @@
+#!/bin/sh
+
+set -e
+
+# opa-fm needs /var/crash to exist for storing core dumps
+if [ ! -d /var/crash ] ; then
+	mkdir /var/crash
+	chmod 755 /var/crash
+fi
+
+#DEBHELPER#
