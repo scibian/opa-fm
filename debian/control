@@ -1,0 +1,27 @@
+Source: opa-fm
+Maintainer: Brian T. Smith <bsmith@systemfabricworks.com>
+Section: net
+Priority: extra
+Standards-Version: 3.9.8
+Homepage: http://www.intel.com
+Build-Depends: debhelper (>= 10),
+               dh-systemd,
+               libexpat-dev,
+               libibumad-dev (>= 1.3.10.2),
+               libibverbs-dev (>= 1.1.2),
+               libssl-dev (>= 1.0.1),
+               zlib1g-dev,
+
+Package: opa-fm
+Architecture: amd64
+Depends: libhfi1,
+         pciutils,
+         systemd,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Conflicts: opensm,
+Description: Intel Omni-Path Fabric Management Software
+ The opa-fm contains Intel Omni-Path fabric management applications.
+ This includes: the Subnet Manager, Baseboard Manager, Performance Manager,
+ Fabric Executive, and some fabric management tools.
+

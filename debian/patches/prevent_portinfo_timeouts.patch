@@ -1,0 +1,22 @@
+Description:  Prevent Get(Portinfo) timeouts due to large trap traffic volume 
+ Upstream patch.
+Origin: vendor, https://github.com/intel/opa-fm/commit/86d2a898652529234a368706e711aaee438b9456
+Last-Update: <2018-12-18>
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/Esm/ib/src/smi/sa/sa_Trap.c
++++ b/Esm/ib/src/smi/sa/sa_Trap.c
+@@ -444,6 +444,13 @@
+ }
+ 
+ 
++static
++void _copy_CapMaskTrap(Port_t **portp, STL_TRAP_CHANGE_CAPABILITY_DATA *ccTrapRef) {
++	(*portp)->portData->portInfo.CapabilityMask.AsReg32 = ccTrapRef->CapabilityMask.AsReg32;
++	(*portp)->portData->portInfo.CapabilityMask3.AsReg16 = ccTrapRef->CapabilityMask3.AsReg16;
++}
++
++
+ /*
+  * Used for forwarding traps that came from the outside.
+  * In this case the caller pass the incoming mai packet
