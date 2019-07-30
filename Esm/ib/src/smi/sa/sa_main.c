@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -65,14 +65,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern	uint32_t	sm_port;
 
 extern	Pool_t		sm_pool;
-extern	Sema_t		sa_sema;
 extern 	uint8_t		nullData[];
 extern  uint64_t	topology_wakeup_time;
 uint32_t            sa_mft_reprog=0;
 
 uint8_t				*sa_data;
 uint32_t			sa_data_length;
-uint32_t			sa_max_path_records;
+uint32_t			sa_max_ib_path_records;
 uint32_t            saDebugRmpp=0;  // control SA RMPP INFO debug messages; default off in ESM
 uint32_t			saRmppCheckSum=0;  // control whether to checksum each rmpp response at start and end of transfer
 STL_CLASS_PORT_INFO	saClassPortInfo;
@@ -183,6 +182,7 @@ static int sa_filter_validate_mad(Mai_t *maip, STL_SA_MAD_HEADER *samad)
         case SA_SERVICE_RECORD:
         case SA_MCMEMBER_RECORD:
         case SA_CLASSPORTINFO:
+	case STL_SA_ATTR_VF_INFO_RECORD:
             break;
         case SA_PORTINFO_RECORD:
             if (maip->base.bversion == IB_BASE_VERSION)
@@ -281,12 +281,12 @@ sa_main(void) {
 	IB_ENTER("sa_main", 0, 0, 0, 0);
 
     if (sa_SubscriberInit() != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: Can't allocate Subscriber hash table");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: Can't allocate Subscriber hash table");
 		return 1;
 	}
     
     if (sa_ServiceRecInit() != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: Can't allocate Service Record hash table");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: Can't allocate Service Record hash table");
 		return 1;
 	}
     
@@ -298,7 +298,7 @@ sa_main(void) {
     IB_LOG_VERBOSE("sa_main: Allocating SA context pool with num entries=", sa_max_cntxt);
 	status = vs_pool_alloc(&sm_pool, sizeof(sa_cntxt_t) * sa_max_cntxt, (void *)&sa_cntxt_pool);
 	if (status != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: Can't allocate SA context pool");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: Can't allocate SA context pool");
 		return 2;
 	}
 	memset( sa_cntxt_pool, 0, sizeof( sa_cntxt_t ) * sa_max_cntxt);
@@ -320,9 +320,10 @@ sa_main(void) {
     //
 	status = vs_pool_alloc(&sm_pool, sa_data_length, (void*)&sa_data);
 	if (status != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: can't allocate sa data");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: can't allocate sa data");
 		return 4;
 	}
+	memset(sa_data,0,sa_data_length);
 
     //
     //	Fill in my ClassPortInfo_t and add it to the database.
@@ -339,7 +340,8 @@ sa_main(void) {
 		STL_SA_CAPABILITY2_QOS_SUPPORT |
 		STL_SA_CAPABILITY2_MFTTOP_SUPPORT |
 		STL_SA_CAPABILITY2_FULL_PORTINFO |
-		STL_SA_CAPABILITY2_EXT_SUPPORT;
+		STL_SA_CAPABILITY2_EXT_SUPPORT |
+		STL_SA_CAPABILITY2_DGDTRECORD_SUPPORT;
 	saClassPortInfo.u1.s.RespTimeValue = sm_config.sa_resp_time_n2;
 	saClassPortInfo.u3.s.RedirectQP = 1;
 	saClassPortInfo.u5.s.TrapHopLimit = 0xff;
@@ -350,7 +352,7 @@ sa_main(void) {
     //
     status = sa_McGroupInit();
 	if (status != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: can't initialize SA McMember/Groups table lock");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: can't initialize SA McMember/Groups table lock");
         return 5;
 	}
 	sa_SetDefBcGrp();
@@ -360,7 +362,7 @@ sa_main(void) {
 	//
 	status = sa_cache_init();
 	if (status != VSTATUS_OK) {
-		IB_FATAL_ERROR("sa_main: can't initialize SA caching");
+		IB_LOG_ERROR_FMT(__func__, "sa_main: can't initialize SA caching");
 		return 6;
 	}
 
@@ -395,7 +397,7 @@ sa_main_reader(uint32_t argc, uint8_t ** argv) {
 	filter.mai_filter_check_packet = sa_reader_filter;
 	MAI_SET_FILTER_NAME (&filter, "SA Reader");
 
-	if (mai_filter_create(fd_sa, &filter, VFILTER_SHARE) != VSTATUS_OK) {
+	if (mai_filter_create(fd_sa->fdMai, &filter, VFILTER_SHARE) != VSTATUS_OK) {
 		IB_LOG_ERROR0("sa_main_reader: can't create SubnAdm(*) filter");
 		(void)vs_thread_exit(&sm_threads[SM_THREAD_SA_READER].handle);
 	}
@@ -407,7 +409,7 @@ sa_main_reader(uint32_t argc, uint8_t ** argv) {
      */
     reqTimeToLive = 4ull * ( (2*(1 << sm_config.sa_packet_lifetime_n2)) + (1 << sm_config.sa_resp_time_n2) ); 
 	while (1) {
-		status = mai_recv(fd_sa, &in_mad, VTIMER_1S/4);
+		status = mai_recv(fd_sa->fdMai, &in_mad, VTIMER_1S/4);
 
         if (sa_main_reader_exit == 1){
 #ifdef __VXWORKS__
@@ -523,12 +525,8 @@ sa_main_reader(uint32_t argc, uint8_t ** argv) {
             timeMftLastUpdated = now;
         } else if (sa_mft_reprog && (now - timeMftLastUpdated) > VTIMER_1S) {
             topology_wakeup_time = 0ull;
-            if ((status = vs_lock(&sa_lock)) != VSTATUS_OK) {
-                IB_LOG_ERRORRC("sa_main_reader: Failed to lock sa_lock rc:", status);
-            } else {
-                sm_McGroups_Need_Prog = 1;      /* tells Topoloy thread that MFT reprogramming is needed */
-                (void)vs_unlock(&sa_lock);
-            }
+            AtomicWrite(&sm_McGroups_Need_Prog, 1); /* tells Topoloy thread that MFT reprogramming is needed */
+
             sm_trigger_sweep(SM_SWEEP_REASON_MCMEMBER);
             /* clear the indicators */
             timeMftLastUpdated = 0;
@@ -540,7 +538,8 @@ sa_main_reader(uint32_t argc, uint8_t ** argv) {
     (void)sa_SubscriberDelete();
     (void)sa_ServiceRecDelete();
     (void)sa_McGroupDelete();
-	if (mai_filter_delete(fd_sa, &filter, VFILTER_SHARE) != VSTATUS_OK) {
+    sm_multicast_destroy_mlid_list();
+	if (mai_filter_delete(fd_sa->fdMai, &filter, VFILTER_SHARE) != VSTATUS_OK) {
 		IB_LOG_ERROR0("sa_main_reader: can't delete SubnAdm(*) filter");
 	}
 	//IB_LOG_INFINI_INFO0("sa_main_reader thread: Exiting OK");
@@ -571,13 +570,13 @@ sa_main_writer(uint32_t argc, uint8_t ** argv) {
 	filter.mai_filter_check_packet = sa_writer_filter;
 	MAI_SET_FILTER_NAME (&filter, "SA Writer");
 
-	if (mai_filter_create(fd_sa_writer, &filter, VFILTER_SHARE) != VSTATUS_OK) {
+	if (mai_filter_create(fd_sa_writer->fdMai, &filter, VFILTER_SHARE) != VSTATUS_OK) {
 		IB_LOG_ERROR0("esm_saw: can't create SubnAdm(*) filter");
 		(void)vs_thread_exit(&sm_threads[SM_THREAD_SA_WRITER].handle);
 	}
 
 	while (1) {
-		status = mai_recv(fd_sa_writer, &in_mad, VTIMER_1S/4);
+		status = mai_recv(fd_sa_writer->fdMai, &in_mad, VTIMER_1S/4);
         if (status != VSTATUS_OK && status != VSTATUS_TIMEOUT) {
             IB_LOG_ERRORRC("sa_main_writer: error on mai_recv rc:", status);
             vs_thread_sleep(VTIMER_1S/10);
@@ -759,7 +758,7 @@ void sa_cntxt_age(void)
                     // Touch the entry
                     tout_cntxt->tstamp = timeLastAged ;
                     // Call timeout
-                    tout_cntxt->sendFd = fd_sa_writer;       // use sa writer mai handle for restransmits
+                    tout_cntxt->sendFd = fd_sa_writer->fdMai;       // use sa writer mai handle for restransmits
                     if (tout_cntxt->method == SA_CM_GETMULTI && tout_cntxt->reqInProg) {
                         // resend the getMulti request ACK
                         sa_getMulti_resend_ack(tout_cntxt);
@@ -1161,7 +1160,7 @@ void showSaParms() {
 }
 
 int saSubscriberSize() {
-	size_t size = sizeof(SubscriberKey_t) + sizeof(InformRecord_t);;
+	size_t size = sizeof(SubscriberKey_t) + sizeof(STL_INFORM_INFO_RECORD);
 	sysPrintf("An SA Subscriber is %d bytes\n", size);
 	return size;
 }

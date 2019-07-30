@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -49,6 +49,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "pm_l.h"
 #include <iba/ibt.h>
 #include "pm_topology.h"
+#ifndef __VXWORKS__
+#include "pa_sth_old.h"
+#endif
 #include "sm_dbsync.h"
 #include "fm_xml.h"
 #include <limits.h>
@@ -93,56 +96,17 @@ Thread_t g_pmAsyncRcvThread;
 boolean g_pmAsyncRcvThreadRunning = FALSE;
 Sema_t g_pmAsyncRcvSema;	// indicates AsyncRcvThread is ready
 
-// Max Compress/Decompress threads possible
-#define PM_MAX_NUM_COMPRESSION_DIVISIONS 32
-#define PM_HALF_SECOND ((uint64_t) 500000U)
+/* Flags used by the PM to determine what data needs to be recalculated instead of
+ * copied from previous Image.
+ */
+typedef enum {
+	PM_TOPO_RECALC_NONE = 0,
+	PM_TOPO_RECALC_VFS = (1<<0),  /* Recalculate VF Membership */
+	PM_TOPO_RECALC_PGS = (1<<1),  /* Recalculate PmPortGroup Membership */
+	PM_TOPO_RECALC_SMS = (1<<2),  /* Recalculate SmInfo Records */
 
-// Compress/Decompress thread ids.
-Thread_t g_pmCompressThreads[PM_MAX_NUM_COMPRESSION_DIVISIONS + 1];
-Thread_t g_pmDecompressThreads[PM_MAX_NUM_COMPRESSION_DIVISIONS + 1];
-
-// default Thresholds
-ErrorSummary_t g_pmThresholds = {
-    Integrity:  100,
-    Congestion: 100,
-    SmaCongestion: 100,
-    Bubble: 100,
-    Security: 10,
-    Routing: 100
-};
-
-// default ThresholdsExceededMsgLimit
-PmThresholdsExceededMsgLimitXmlConfig_t g_pmThresholdsExceededMsgLimit = {
-    Integrity:  10,
-    Congestion: 0,
-    SmaCongestion: 0,
-    Bubble: 0,
-    Security: 10,
-    Routing: 10
-};
-
-// default Weights for components of Integrity
-IntegrityWeights_t g_pmIntegrityWeights = {
-    LocalLinkIntegrityErrors: 0,
-    PortRcvErrors: 100,
-    ExcessiveBufferOverruns: 100,
-    LinkErrorRecovery: 0,
-    LinkDowned: 25,
-    UncorrectableErrors: 100,
-    FMConfigErrors: 100,
-    LinkQualityIndicator: 40,
-    LinkWidthDowngrade: 100
-};
-
-// default Weights for components of Congestion
-CongestionWeights_t g_pmCongestionWeights = {
-    PortXmitWait: 10,
-    SwPortCongestion: 100,
-    PortRcvFECN: 5,
-    PortRcvBECN: 1,
-    PortXmitTimeCong: 25,
-    PortMarkFECN: 25
-};
+	PM_TOPO_RECALC_ALL = 0xFF     /* Recalculate ALL */
+} PmTopoReCalcFlags_t;
 
 /* DN445 - PA Failover feature. Thread to sync RAM/Disk short term PA history data per SM. */
 Thread_t              g_PmDbsyncThread;
@@ -155,11 +119,10 @@ typedef struct PmDbsyncSmInfo_s {
 	uint32	sweepNumLastSweepImageSent;  // sweep number of the last sweep image that was sent to all Standby SMs.
 	struct DbsyncSmInfo {
 		uint64	PortGUID;               // PortGUID in SMInfo
-		uint16	smLid;                  // implies port, 0 if empty record
+		STL_LID	smLid;                  // implies port, 0 if empty record
 		uint8	priority:4;             // present priority
 		uint8	state:4;                // present state
-        DBSyncCap_t     syncCapability; /* 0=unknown, 1=not supported, 2=supported */
-
+        DBSyncCap_t	syncCapability;         // 0=unknown, 1=not supported, 2=supported
 		uint8	numRImagesForSync;      // Number of RAM images to be sent to Standby SM
 		uint8	rImgPmDbsyncNeeded;     // 0-no RAM image sync operations needed. 1-sync needed.
 		uint8	histPmDbsyncNeeded;     // 0-no PM history sync operations needed. 1-sync needed.
@@ -177,7 +140,7 @@ PmDbsyncSmInfo_t      newPmDbsyncSmInfo;
 static void checkForChangesInStandbySMs(PmDbsyncSmInfo_t *base, PmDbsyncSmInfo_t *new)
 {
 	uint32    newIndex, baseIndex;
-	uint16    smLid;
+	STL_LID   smLid;
 
 	if ((new->NumStandbySMs == 0) && (base->NumStandbySMs == 0)) {
 		/* no standby SMs; nothing to do. */
@@ -210,7 +173,7 @@ static void checkForChangesInStandbySMs(PmDbsyncSmInfo_t *base, PmDbsyncSmInfo_t
 				new->SMs[newIndex].histPmDbsyncNeeded = base->SMs[baseIndex].histPmDbsyncNeeded;
 				new->SMs[newIndex].rImgPmDbsyncNeeded = base->SMs[baseIndex].rImgPmDbsyncNeeded;
 				new->SMs[newIndex].numRImagesForSync = base->SMs[baseIndex].numRImagesForSync;
-				cs_strlcpy(new->SMs[newIndex].histImgListFile, base->SMs[newIndex].histImgListFile, 300);
+				StringCopy(new->SMs[newIndex].histImgListFile, base->SMs[newIndex].histImgListFile, 300);
 				new->SMs[newIndex].histImgFileIndex = base->SMs[newIndex].histImgFileIndex;
 				new->SMs[newIndex].numSweepImagesSent = base->SMs[baseIndex].numSweepImagesSent;
 				new->SMs[newIndex].numHistImagesSent = base->SMs[baseIndex].numHistImagesSent;
@@ -361,7 +324,7 @@ int hist_filter (const struct dirent *d) {
 #ifndef __VXWORKS__
 /* Create a file snapshot that contains the list of history image files to be sent to smLid Standby SM */
 /* File list name contains smLid to make it unique. Each file in the file list contains full path (latest to oldest sorted using file name). */
-int createHistFileListForSM(char *histPath, uint16 smLid, char *fileList)
+int createHistFileListForSM(char *histPath, STL_LID smLid, char *fileList)
 {
 	char suff[20];
 	struct dirent **d;
@@ -463,7 +426,7 @@ static void PmDbsyncStatusFlagsUpdate(Pm_t *pm)
 {
 	PmDbsyncSmInfo_t  *PmDbsyncSmInfo_p = &basePmDbsyncSmInfo;
 	uint32            smIndex;
-	uint16            smLid;
+	STL_LID           smLid;
 
 	PmDbsyncSmInfo_p->ChangeinStandbySMs = FALSE;
 	for (smIndex=0; smIndex<PmDbsyncSmInfo_p->NumStandbySMs; smIndex++) {
@@ -504,7 +467,7 @@ static void PmDbsyncOperation(Pm_t *pm)
 {
 	PmDbsyncSmInfo_t  *PmDbsyncSmInfo_p = &basePmDbsyncSmInfo;
 	uint32            smIndex;
-	uint16            smLid;
+	STL_LID           smLid;
 	uint32            numImagesSent;
 	int               offset;
 	char              histFile[300];
@@ -695,14 +658,6 @@ void PM_InitStaticRateToMBps(void)
 		s_StaticRateToMBps[i] = StlStaticRateToMBps(i);
 }
 
-char *getDGName(int dgIndex)
-{
-	DGConfig_t* dgp;
-
-	dgp = dg_config.dg[dgIndex];  // index always valid??
-	return(dgp->name);
-}
-
 int getUserPGIndex(char *groupName)
 {
 	int res = -1;
@@ -735,9 +690,6 @@ static void RemoveFromGroups(Pm_t *pm, PmPort_t *pmportp)
 	uint32 imageIndex = pm->SweepIndex;
 	PmPortImage_t *portImage = &pmportp->Image[imageIndex];
 
-	if (pmportp->u.s.PmaAvoid)
-		goto done;
-
 #if PM_COMPRESS_GROUPS
 	loopMax = portImage->numGroups;
 #else
@@ -755,24 +707,20 @@ static void RemoveFromGroups(Pm_t *pm, PmPort_t *pmportp)
 		if (portImage->InternalBitMask & (1<<grpIndex)) {
             IB_LOG_VERBOSE_FMT(__func__, "%s Int. %.*s Guid "FMT_U64" LID 0x%x Port %u",
 				groupp->Name, (int)sizeof(pmportp->pmnodep->nodeDesc.NodeString),
-			   	pmportp->pmnodep->nodeDesc.NodeString,
-			   	pmportp->pmnodep->guid,
-			   	pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+				pmportp->pmnodep->nodeDesc.NodeString,
+				pmportp->pmnodep->NodeGUID,
+				pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 			PmRemoveIntPortFromGroupIndex(portImage, grpIndex, groupp, imageIndex, 0);
 		} else {
 			IB_LOG_VERBOSE_FMT(__func__, "%s Ext. %.*s Guid "FMT_U64" LID 0x%x Port %u",
 				groupp->Name, (int)sizeof(pmportp->pmnodep->nodeDesc.NodeString),
 				pmportp->pmnodep->nodeDesc.NodeString,
-				pmportp->pmnodep->guid,
-			   	pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+				pmportp->pmnodep->NodeGUID,
+				pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 			PmRemoveExtPortFromGroupIndex(portImage, grpIndex, groupp, imageIndex, 0);
 		}
 	}
-	// remove from AllPorts group
-	pm->AllPorts->Image[imageIndex].NumIntPorts--;
 	portImage->u.s.Initialized = 0;	// force analysis of groups when reappears
-done:
-	return;
 }
 
 // add port to proper groups for current sweep Index
@@ -783,17 +731,12 @@ static void AddToGroups(Pm_t *pm, PmPort_t *pmportp)
 	int grpIndex;
 	char *groupName;
 	uint32 imageIndex = pm->SweepIndex;
+	PmImage_t *pmimagep = &pm->Image[imageIndex];
 	PmPortImage_t *portImage = &pmportp->Image[imageIndex];
 
-	if (pmportp->u.s.PmaAvoid)
-		goto done;
-
-	// add to AllPorts group
-	pm->AllPorts->Image[imageIndex].NumIntPorts++;
-
 	// identify other groups port should be added to
-	for (i=0,grpIndex=0; i<pm->NumGroups; i++) {
-		PmGroup_t *groupp = pm->Groups[i];
+	for (i = 0,grpIndex = 0; i < pmimagep->NumGroups; i++) {
+		PmGroup_t *groupp = &pmimagep->Groups[i];
 		groupName = groupp->Name;
 		// TBD - should a compare_node function be used so can skip
 		// iterating on all ports of a switch?  However does not fit in
@@ -809,12 +752,12 @@ static void AddToGroups(Pm_t *pm, PmPort_t *pmportp)
 			if (groupp->ComparePortFunc && ! (*groupp->ComparePortFunc)(portImage->neighbor, groupp->Name)) {
 				IB_LOG_VERBOSE_FMT(__func__, "%s Ext. %.*s Guid "FMT_U64" LID 0x%x Port %u",
 					groupp->Name, (int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-					pmportp->pmnodep->guid, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+					pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 				PmAddExtPortToGroupIndex(portImage, grpIndex, groupp, imageIndex);
 			} else {
 				IB_LOG_VERBOSE_FMT(__func__, "%s Int. %.*s Guid "FMT_U64" LID 0x%x Port %u",
 					groupp->Name, (int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-					pmportp->pmnodep->guid, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+					pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 				PmAddIntPortToGroupIndex(portImage, grpIndex, groupp, imageIndex);
 			}
 		} else {
@@ -822,12 +765,11 @@ static void AddToGroups(Pm_t *pm, PmPort_t *pmportp)
 			// perhaps this case should be Ext in general
 			IB_LOG_VERBOSE_FMT(__func__, "%s Int. %.*s Guid "FMT_U64" LID 0x%x Port %u",
 				groupp->Name, (int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-				pmportp->pmnodep->guid, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+				pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 			PmAddIntPortToGroupIndex(portImage, grpIndex, groupp, imageIndex);
 		}
 		grpIndex++;
 	}
-done:
 	return;
 
 fail:
@@ -835,7 +777,7 @@ fail:
 		IB_LOG_WARN_FMT(__func__, "Failed to Add port to group %.*s (too many groups for port) %.*s Guid "FMT_U64" LID 0x%x Port %u",
 			(int)sizeof(groupName), groupName,
 			(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-			pmportp->pmnodep->guid, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
+			pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[imageIndex].lid, pmportp->portNum);
 	return;
 }
 
@@ -854,11 +796,9 @@ void clear_pmport(Pm_t *pm, PmPort_t *pmportp)
 	pmportp->neighbor_lid = 0;	// no neighbor
 }
 
-void update_pm_vfvlmap(Pm_t *pm, PmPortImage_t *portImage, VlVfMap_t *vlvfmap)
+void update_pm_vfvlmap(PmImage_t *pmimagep, PmPortImage_t *portImage, VlVfMap_t *vlvfmap)
 {
-	int vl, vfi, i;
-	int vfIndex = 0;
-	VirtualFabrics_t *VirtualFabrics = old_topology.vfs_ptr;
+	int vl, vf;
 
 	portImage->numVFs = 0;
 	memset(&portImage->vfvlmap, 0, sizeof(vfmap_t) * MAX_VFABRICS);
@@ -866,30 +806,14 @@ void update_pm_vfvlmap(Pm_t *pm, PmPortImage_t *portImage, VlVfMap_t *vlvfmap)
 
 	for (vl = 0; vl < STL_MAX_VLS; vl++) {
 		/* loop and add VFs - may be duplicates if VF is using more than 1 vl on this port */
-		for (vfi = 0; vfi < MAX_VFABRICS; vfi++) {
-			int vf = vlvfmap->vf[vl][vfi];
-			if (vf == -1) continue;
+		for(vf = 0; (vf = bitset_find_next_one(&vlvfmap->vf[vl], vf)) != -1; vf++){
 
-			// now loop through PmVF_t to find a name match, and set pointer in
-			// vfmap[vfIndex] to point to it, and set vl
-			for (i = 0; i < pm->numVFs && i < MAX_VFABRICS; i++) {
-				PmVF_t *vfp = pm->VFs[i];
-				if (strcmp(VirtualFabrics->v_fabric[vf].name, vfp->Name) != 0) continue;
-
-				// Find if VF is already in Port
-				for (vfIndex = 0; vfIndex < portImage->numVFs; vfIndex++)
-					if (portImage->vfvlmap[vfIndex].pVF == vfp) break;
-
-				// If new VF update Pointer and VF Count
-				if (portImage->vfvlmap[vfIndex].pVF != vfp) {
-					DEBUG_ASSERT(portImage->vfvlmap[vfIndex].pVF == NULL);
-					portImage->vfvlmap[vfIndex].pVF = vfp;
-					portImage->numVFs++;
-				}
-				// Update VLMasks (perVL or for the whole port)
-				portImage->vfvlmap[vfIndex].vlmask |= (1 << vl);
-				portImage->vlSelectMask |= (1 << vl);
+			if(portImage->vfvlmap[vf].vlmask == 0){
+				portImage->numVFs++;
 			}
+
+			portImage->vfvlmap[vf].vlmask |= 1 << vl;
+			portImage->vlSelectMask |= 1 << vl;
 		}
 	}
 	return;
@@ -898,11 +822,13 @@ void update_pm_vfvlmap(Pm_t *pm, PmPortImage_t *portImage, VlVfMap_t *vlvfmap)
 // Update a Port's information (neighbor, state) for current SweepIndex
 // caller should verify portp is valid
 static
-void update_pmport(Pm_t *pm, PmPort_t *pmportp, Node_t *nodep, Port_t *portp)
+void update_pmport(Pm_t *pm, PmPort_t *pmportp, Node_t *nodep, Port_t *portp, PmTopoReCalcFlags_t recalc_flags)
 {
+	PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
 	Node_t *neigh_nodep;
 	Port_t *neigh_portp;
 	PmPortImage_t *portImage = &pmportp->Image[pm->SweepIndex];
+	int vl;
 
 	DEBUG_ASSERT(sm_valid_port(portp));
 	portImage->u.s.active = sm_port_active(portp);
@@ -914,11 +840,20 @@ void update_pmport(Pm_t *pm, PmPort_t *pmportp, Node_t *nodep, Port_t *portp)
 		StlLinkWidthToInt(portp->portData->portInfo.LinkWidth.Active) -
 		StlLinkWidthToInt(portp->portData->portInfo.LinkWidthDowngrade.RxActive) : 0);
 	portImage->u.s.activeSpeed = portp->portData->portInfo.LinkSpeed.Active;
-	memcpy(portImage->dgMember,  portp->portData->dgMemberList, sizeof(portp->portData->dgMemberList));
-	if (pm_config.process_vl_counters) {
+	if (recalc_flags & PM_TOPO_RECALC_VFS) {
+		bitset_copy(&pmportp->dgMember, &portp->portData->dgMember);
 		VlVfMap_t vlvfmap;
 		old_topology.routingModule->funcs.select_vlvf_map(&old_topology, nodep, portp, &vlvfmap); // select is based on appropriate instance of _select_vlvf_map()
-		update_pm_vfvlmap(pm, portImage, &vlvfmap);
+		update_pm_vfvlmap(pmimagep, portImage, &vlvfmap);
+		// free bitsets allocated in select
+		for (vl = 0; vl < STL_MAX_VLS; vl++){
+			bitset_free(&vlvfmap.vf[vl]);
+		}
+	} else {
+		PmPortImage_t *portImagePrev = &pmportp->Image[pm->LastSweepIndex];
+		memcpy(portImage->vfvlmap, portImagePrev->vfvlmap, sizeof(vfmap_t)*MAX_VFABRICS);
+		portImage->vlSelectMask = portImagePrev->vlSelectMask;
+		portImage->numVFs = portImagePrev->numVFs;
 	}
 
 	// TBD - can't avoid sm_find_node, but it itself could be optimized
@@ -944,7 +879,7 @@ void update_pmport(Pm_t *pm, PmPort_t *pmportp, Node_t *nodep, Port_t *portp)
 	}
 	IB_LOG_DEBUG1_FMT(__func__, "%.*s Guid "FMT_U64" LID 0x%x Port %u neighbor lid 0x%x Port %u",
 		(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-		pmportp->pmnodep->guid, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
+		pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
 		pmportp->neighbor_lid, pmportp->neighbor_portNum);
 }
 
@@ -960,6 +895,11 @@ PmPort_t *new_pmport(Pm_t *pm)
 		return NULL;
 	}
 	memset(pmportp, 0, pm->PmPortSize);
+
+	if (!bitset_init(&pm_pool, &pmportp->dgMember, MAX_VFABRIC_GROUPS)) {
+		vs_pool_free(&pm_pool, pmportp);
+		return NULL;
+	}
 
 	return pmportp;
 }
@@ -982,12 +922,12 @@ PmPort_t *allocate_pmport(Pm_t *pm, Node_t *nodep, Port_t *portp, PmNode_t *pmno
 		//Initialized = 0;
 	pmportp->pmnodep = pmnodep;
 
-	update_pmport(pm, pmportp, nodep, portp);	// update neighbor, state, rate and mtu 
+	update_pmport(pm, pmportp, nodep, portp, PM_TOPO_RECALC_ALL); // update neighbor, state, rate and mtu
 	// assumes pmportp->nodep PmaCapabilities already updated
 	PmUpdatePortPmaCapabilities(pmportp, portp);
 	IB_LOG_DEBUG1_FMT(__func__, "%.*s Guid "FMT_U64" LID 0x%x Port %u neighbor lid 0x%x Port %u",
 		(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-		pmportp->pmnodep->guid, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
+		pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
 		pmportp->neighbor_lid, pmportp->neighbor_portNum);
 	return pmportp;
 }
@@ -997,8 +937,9 @@ void free_pmport(Pm_t *pm, PmPort_t *pmportp)
 {
 	IB_LOG_DEBUG1_FMT(__func__, "freeing %.*s Port %u Guid "FMT_U64" LID 0x%x",
 		(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-		pmportp->portNum, pmportp->pmnodep->guid, pmportp->pmnodep->Image[pm->SweepIndex].lid);
+		pmportp->portNum, pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[pm->SweepIndex].lid);
 	RemoveFromGroups(pm, pmportp);
+	bitset_free(&pmportp->dgMember);
 	vs_pool_free(&pm_pool, pmportp);
 }
 
@@ -1020,7 +961,7 @@ void free_pmportList(Pm_t *pm, PmNode_t *pmnodep) {
 }
 
 static
-void initialize_path(PmNode_t *pmnodep, uint16 lid, uint32 imageIndex)
+void initialize_path(PmNode_t *pmnodep, STL_LID lid, uint32 imageIndex)
 {
 	// default path information (no redirect)
 	pmnodep->dlid = pmnodep->Image[imageIndex].lid = lid;
@@ -1052,8 +993,8 @@ void update_pmnode(Pm_t *pm, PmNode_t *pmnodep, Node_t *nodep, Port_t *portp, Po
 	// when device revision changes we need to update the Pma Capabilities
 	if (pmnodep->deviceRevision != nodep->nodeInfo.Revision || g_pmFirstSweepAsMaster) {
 		pmnodep->deviceRevision = nodep->nodeInfo.Revision;
-		PmUpdateNodePmaCapabilities(pmnodep,nodep,(pm->flags & STL_PM_PROCESS_HFI_COUNTERS));
-#if 0
+		PmUpdateNodePmaCapabilities(pmnodep,nodep,(pm->pmFlags & STL_PM_PROCESS_HFI_COUNTERS));
+#if 1
 		// to be safe, clear out any previous ClassPortInfo
 		// be safe, will update capabilities when get class port info again
 		pmnodep->u.s.PmaGotClassPortInfo = 0;
@@ -1070,7 +1011,7 @@ void update_pmnode(Pm_t *pm, PmNode_t *pmnodep, Node_t *nodep, Port_t *portp, Po
 
 	IB_LOG_DEBUG1_FMT(__func__, "%.*s Guid "FMT_U64" LID 0x%x: Path: DLID 0x%x PKEY 0x%x SL %u",
 		(int)sizeof(pmnodep->nodeDesc.NodeString), pmnodep->nodeDesc.NodeString,
-		pmnodep->guid, pmnodep->Image[pm->SweepIndex].lid,
+		pmnodep->NodeGUID, pmnodep->Image[pm->SweepIndex].lid,
 		pmnodep->dlid, pmnodep->pkey, pmnodep->sl);
 }
 
@@ -1078,12 +1019,12 @@ void update_pmnode(Pm_t *pm, PmNode_t *pmnodep, Node_t *nodep, Port_t *portp, Po
 // if still referenced, merely removes all ports from all groups for SweepIndex
 void release_pmnode(Pm_t *pm, PmNode_t *pmnodep)
 {
-	
+
 	uint32 refCount = AtomicDecrement(&pmnodep->refCount);
 	IB_LOG_DEBUG1_FMT(__func__, "%s %.*s Guid "FMT_U64" LID 0x%x",
 		refCount?"still referenced":"freeing",
 		(int)sizeof(pmnodep->nodeDesc.NodeString), pmnodep->nodeDesc.NodeString,
-		pmnodep->guid, pmnodep->Image[pm->SweepIndex].lid);
+		pmnodep->NodeGUID, pmnodep->Image[pm->SweepIndex].lid);
 	if (refCount) {
 		if (pmnodep->nodeType == STL_NODE_SW) {
 			uint8 i;
@@ -1131,7 +1072,8 @@ PmNode_t *allocate_pmnode(Pm_t *pm, Node_t *nodep, Port_t *portp)
 	if (nodep->nodeInfo.NodeType == STL_NODE_SW)
 		ASSERT(portp == sm_get_port(nodep, 0));	// portp should be lid'ed port
 
-	pmnodep->guid = nodep->nodeInfo.NodeGUID;
+	pmnodep->NodeGUID = nodep->nodeInfo.NodeGUID;
+	pmnodep->SystemImageGUID = nodep->nodeInfo.SystemImageGUID;
 	pmnodep->nodeType = nodep->nodeInfo.NodeType;
 	pmnodep->deviceRevision = nodep->nodeInfo.Revision;
 	pmnodep->numPorts= nodep->nodeInfo.NumPorts;	// only used for switch
@@ -1140,7 +1082,7 @@ PmNode_t *allocate_pmnode(Pm_t *pm, Node_t *nodep, Port_t *portp)
 	pmnodep->up.swPorts = NULL;
 	pmnodep->u.AsReg16 = 0;
 		//PmaGotClassPortInfo = 0;
-	PmUpdateNodePmaCapabilities(pmnodep, nodep, (pm->flags & STL_PM_PROCESS_HFI_COUNTERS));
+	PmUpdateNodePmaCapabilities(pmnodep, nodep, (pm->pmFlags & STL_PM_PROCESS_HFI_COUNTERS));
 
 	// default path information (no redirect)
 	initialize_path(pmnodep, portp->portData->lid, imageIndex);
@@ -1155,8 +1097,7 @@ PmNode_t *allocate_pmnode(Pm_t *pm, Node_t *nodep, Port_t *portp)
 			vs_pool_free(&pm_pool, pmnodep);
 			return NULL;
 		}
-		memset(pmnodep->up.swPorts, 0, 
-					   	sizeof(PmPort_t*)*(pmnodep->numPorts+1));
+		memset(pmnodep->up.swPorts, 0, sizeof(PmPort_t*)*(pmnodep->numPorts+1));
 		for (i=0; i<=pmnodep->numPorts; ++i) {
 			Port_t *portp2 = (i==0)?portp:sm_find_node_port(&old_topology, nodep, i);
 			if (sm_valid_port(portp2) && sm_port_active(portp2)
@@ -1195,7 +1136,7 @@ cleanup:
 	return NULL;
 }
 
-PmNode_t *get_pmnodep(Pm_t *pm, Guid_t guid, uint16 lid)
+PmNode_t *get_pmnodep(Pm_t *pm, Guid_t guid, STL_LID lid)
 {
 	PmNode_t *pmnodep = NULL;
 	cl_map_item_t *mi;
@@ -1207,7 +1148,7 @@ PmNode_t *get_pmnodep(Pm_t *pm, Guid_t guid, uint16 lid)
 		if (pm->LastSweepIndex == PM_IMAGE_INDEX_INVALID
 			|| pmnodep != pm->Image[pm->LastSweepIndex].LidMap[lid]) {
 			// lid changed since last pm sweep
-#if 0
+#if 1
 			// clear out any previous redirect
 			// be safe, will update capabilities when get class port info again
 			pmnodep->u.s.PmaGotClassPortInfo = 0;
@@ -1234,14 +1175,14 @@ PmNode_t *check_pmnodep(Pm_t *pm, Port_t *portp)
 {
 	PmNode_t *pmnodep;
 	PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
-	uint16 lid = portp->portData->lid;
+	STL_LID lid = portp->portData->lid;
 
 	ASSERT(lid);
 	ASSERT(lid <= old_topology.maxLid);
 	ASSERT(portp->portData->guid);
 	pmnodep = pmimagep->LidMap[lid];
 	if (pmnodep
-		&& (pmnodep->guid != portp->portData->nodePtr->nodeInfo.NodeGUID
+		&& (pmnodep->NodeGUID != portp->portData->nodePtr->nodeInfo.NodeGUID
 			|| (pmnodep->nodeType != STL_NODE_SW
 				   	&& pmnodep->up.caPortp->guid != portp->portData->guid))) {
 		IB_LOG_VERBOSEX("Lid reused, free lid", lid);
@@ -1259,17 +1200,36 @@ PmNode_t *check_pmnodep(Pm_t *pm, Port_t *portp)
 
 // Lookup a node in Pm Topology based on lid
 // caller should have imageLock held
-PmNode_t *pm_find_node(PmImage_t *pmimagep, STL_LID_32 lid)
+PmNode_t *pm_find_node(PmImage_t *pmimagep, STL_LID lid)
 {
 	if (lid > pmimagep->maxLid)
 		return NULL;
 	return pmimagep->LidMap[lid];
 }
 
+// Lookup a node in Pm Topology based on nodeguid
+PmNode_t *pm_find_nodeguid(Pm_t *pm, uint64 nodeGUID)
+{
+	uint8 port_num = 0;
+	int j;
+	uint64 portGUID;
+	PmNode_t *pmnodep = NULL;
+	cl_map_item_t *mi;
+
+	for ( j=0; j < 4; j++) {
+		portGUID = (nodeGUID & ~PORTGUID_PNUM_MASK) | (((EUI64)port_num << PORTGUID_PNUM_SHIFT) & PORTGUID_PNUM_MASK);
+		mi = cl_qmap_get(&pm->AllNodes, portGUID);
+		if (mi != cl_qmap_end(&pm->AllNodes)) { // found
+			pmnodep = PARENT_STRUCT(mi, PmNode_t, AllNodesEntry);
+		}
+	}
+	return pmnodep;
+}
+
 // Lookup a port in Pm Topology based on lid and portNum
 // does not have to be a "lid"'ed port
 // caller should have imageLock held
-PmPort_t *pm_find_port(PmImage_t *pmimagep, STL_LID_32 lid, uint8 portNum)
+PmPort_t *pm_find_port(PmImage_t *pmimagep, STL_LID lid, uint8 portNum)
 {
 	PmNode_t *pmnodep = pm_find_node(pmimagep, lid);
 	if (pmnodep) {
@@ -1293,7 +1253,7 @@ PmPort_t *pm_find_port(PmImage_t *pmimagep, STL_LID_32 lid, uint8 portNum)
 // copy a "lid"'ed port (port 0 of switch, or port on FI)
 // caller has verified portp supplied is valid and active
 static Status_t
-pm_copy_topology_port(Pm_t *pm, Port_t *portp, Port_t *sm_portp)
+pm_copy_topology_port(Pm_t *pm, Port_t *portp, Port_t *sm_portp, PmTopoReCalcFlags_t recalc_flags)
 {
 	Status_t status = VSTATUS_OK;
 	PmNode_t *pmnodep;
@@ -1313,7 +1273,7 @@ pm_copy_topology_port(Pm_t *pm, Port_t *portp, Port_t *sm_portp)
 		int i;
 		PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
 		update_pmnode(pm, pmnodep, nodep, portp, sm_portp);
-		update_pmport(pm, pmnodep->up.swPorts[0], nodep, portp);
+		update_pmport(pm, pmnodep->up.swPorts[0], nodep, portp, recalc_flags);
 		pmimagep->SwitchPorts++;	// include Port 0
 		for (i=1; i<=pmnodep->numPorts; ++i) {
 			Port_t *portp2 = sm_find_node_port(&old_topology, nodep, i);
@@ -1326,7 +1286,7 @@ pm_copy_topology_port(Pm_t *pm, Port_t *portp, Port_t *sm_portp)
 				pmnodep->up.swPorts[i] = allocate_pmport(pm, nodep, portp2, pmnodep);
 				if (! pmnodep->up.swPorts[i]) {
 					IB_LOG_ERRORRC("Failed to allocate PM Port ptrs rc:", status);
-                    return VSTATUS_NOMEM;
+                    			return VSTATUS_NOMEM;
 				}
 			} else if (! portp2 && pmportp2) {
 				// we can't free port because other images may be using it
@@ -1335,12 +1295,12 @@ pm_copy_topology_port(Pm_t *pm, Port_t *portp, Port_t *sm_portp)
 				//free_pmport(pm, pmportp2);
 				//pmnodep->up.swPorts[i] = NULL;
 			} else if (portp2 && pmportp2) {
-				update_pmport(pm, pmportp2, nodep, portp2);
+				update_pmport(pm, pmportp2, nodep, portp2, recalc_flags);
 			}
 		}
 	} else {
 		update_pmnode(pm, pmnodep, nodep, portp, sm_portp);
-		update_pmport(pm, pmnodep->up.caPortp, nodep, portp);
+		update_pmport(pm, pmnodep->up.caPortp, nodep, portp, recalc_flags);
 	}
 	pmnodep->changed_count = topology_passcount; // topology_changed_count;
 	return status;
@@ -1352,17 +1312,22 @@ uint32 connect_neighbor(Pm_t *pm, PmPort_t *pmportp)
 	PmPort_t *new_neighbor;
 	PmPortImage_t *portImage = &pmportp->Image[pm->SweepIndex];
 
-
-
 	if (pmportp->neighbor_lid) {
 		new_neighbor = pm_find_port(&pm->Image[pm->SweepIndex], pmportp->neighbor_lid, pmportp->neighbor_portNum);
 		if (new_neighbor) {
 			if (new_neighbor == portImage->neighbor)
-                IB_LOG_DEBUG1_FMT(__func__, "reconnect neighbors.  lid 0x%x Port %u neighbor lid 0x%x Port %u", pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum, new_neighbor->pmnodep->Image[pm->SweepIndex].lid, new_neighbor->portNum);
+                IB_LOG_DEBUG1_FMT(__func__,
+					"reconnect neighbors.  lid 0x%x Port %u neighbor lid 0x%x Port %u",
+					pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
+					new_neighbor->pmnodep->Image[pm->SweepIndex].lid, new_neighbor->portNum);
 			else
-                IB_LOG_VERBOSE_FMT(__func__, "connect neighbors.  lid 0x%x Port %u neighbor lid 0x%x Port %u", pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum, new_neighbor->pmnodep->Image[pm->SweepIndex].lid, new_neighbor->portNum);
+                IB_LOG_VERBOSE_FMT(__func__,
+					"connect neighbors.  lid 0x%x Port %u neighbor lid 0x%x Port %u",
+					pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum,
+					new_neighbor->pmnodep->Image[pm->SweepIndex].lid, new_neighbor->portNum);
 		} else {
-			IB_LOG_VERBOSE_FMT(__func__, "unable to find neighbor of lid 0x%x Port %u", pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
+			IB_LOG_VERBOSE_FMT(__func__, "unable to find neighbor of lid 0x%x Port %u",
+				pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
 		}
 	} else {
 		new_neighbor = NULL;
@@ -1385,7 +1350,7 @@ uint32 connect_neighbor(Pm_t *pm, PmPort_t *pmportp)
 // copy all the ports which are in the new SM topology
 // does not handle disappeared ports
 static Status_t
-pm_topology_copy_active_ports(Pm_t *pm, Port_t *sm_portp)
+pm_topology_copy_active_ports(Pm_t *pm, Port_t *sm_portp, PmTopoReCalcFlags_t recalc_flags)
 {
 	Node_t *nodep;
 	PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
@@ -1401,7 +1366,7 @@ pm_topology_copy_active_ports(Pm_t *pm, Port_t *sm_portp)
 			portp = sm_get_port(nodep, 0);
 			if (sm_valid_port(portp) && sm_port_active(portp)) {
 				pmimagep->SwitchNodes++;
-				if (pm_copy_topology_port(pm, portp, sm_portp) == VSTATUS_NOMEM)
+				if (pm_copy_topology_port(pm, portp, sm_portp, recalc_flags) == VSTATUS_NOMEM)
                     return VSTATUS_NOMEM;
 			}
 		} else {
@@ -1410,7 +1375,7 @@ pm_topology_copy_active_ports(Pm_t *pm, Port_t *sm_portp)
 					if (nodep->nodeInfo.NodeType == STL_NODE_FI) {
 						pmimagep->HFIPorts++;
 					}
-					if (pm_copy_topology_port(pm, portp, sm_portp) == VSTATUS_NOMEM)
+					if (pm_copy_topology_port(pm, portp, sm_portp, recalc_flags) == VSTATUS_NOMEM)
                         return VSTATUS_NOMEM;
 				}
 			}
@@ -1424,7 +1389,7 @@ pm_topology_copy_active_ports(Pm_t *pm, Port_t *sm_portp)
 static
 void pm_topology_reconnect(Pm_t *pm, PmImage_t *pmimagep)
 {
-	uint16 lid;
+	STL_LID lid;
 
 	pmimagep->NumLinks = 0;
 
@@ -1521,12 +1486,15 @@ static FSTATUS pm_copy_topology(Pm_t *pm)
 {
 	int changed = 0;
 	FSTATUS ret = FNOT_DONE;
-	uint16 oldMaxLid = 0;	// keep compiler happy, initialized below when used
+	STL_LID oldMaxLid = 0;	// keep compiler happy, initialized below when used
 	PmNode_t **oldLidMap = NULL;
-	uint16_t newSize = 0;
+	uint32 newSize = 0;
 	uint32 imageIndex = pm->SweepIndex;
 	PmImage_t *pmimagep = &pm->Image[imageIndex];
+
+	PmTopoReCalcFlags_t recalc_flags = PM_TOPO_RECALC_NONE;
 	int i;
+	extern SMXmlConfig_t sm_config;
 
 	(void)vs_rdlock(&old_topology_lock);
 	// TBD - may be possible to add optimization in SM itself to skip updates
@@ -1535,7 +1503,7 @@ static FSTATUS pm_copy_topology(Pm_t *pm)
 	// sm_isMaster and topology_passcount are protected by new_topology_lock,
 	// but a quick read should be ok
 	// let SM become master and get a sweep done 1st
-    if (sm_isMaster() && topology_passcount >= 1)
+	if (sm_isMaster() && topology_passcount >= 1)
 		ret = FSUCCESS;
 
 #ifdef __VXWORKS__
@@ -1555,24 +1523,34 @@ static FSTATUS pm_copy_topology(Pm_t *pm)
 		PmNode_t **newLidMap;
 		Status_t rc;
 
+		// Check if we can just copy topology data from last image
+		if (pm->changed_count != topology_passcount || pm->LastSweepIndex == PM_IMAGE_INDEX_INVALID) {
+			recalc_flags = PM_TOPO_RECALC_ALL;
+		}
+		if (g_pmDebugPerf) {
+			IB_LOG_INFINI_INFO_FMT(__func__, "PM Topology Recalculate Flags: 0x%x", (uint8)recalc_flags);
+		}
+
 		IB_LOG_INFO_FMT(__func__, "START copy new PM topology: size=%u", pmimagep->lidMapSize);
-        IB_LOG_VERBOSE_FMT(__func__, "sm passcount=%u", topology_passcount);
+		IB_LOG_VERBOSE_FMT(__func__, "sm passcount=%u", topology_passcount);
 		sm_portp = sm_get_port(old_topology.node_head, pm_config.port);
 		pm->pm_slid = sm_lid;
 
 		oldMaxLid = pmimagep->maxLid;
 		// as needed grow or shink array, with some extra space for growth
-		if (pmimagep->lidMapSize < old_topology.maxLid+1
-			|| pmimagep->lidMapSize > old_topology.maxLid + PM_LID_MAP_FREE_THRESHOLD) {
-			newSize = MIN(old_topology.maxLid+1+PM_LID_MAP_SPARE,LID_UCAST_END+1);
+		if (pmimagep->lidMapSize < (old_topology.maxLid + 1)
+			|| pmimagep->lidMapSize > (old_topology.maxLid + PM_LID_MAP_FREE_THRESHOLD))
+		{
+			newSize = MIN(old_topology.maxLid+1+PM_LID_MAP_SPARE,sm_config.max_supported_lid+1);
 			IB_LOG_INFO_FMT(__func__, "resize lidMap oldSize=%u newSize=%u", pmimagep->lidMapSize, newSize);
 			rc = vs_pool_alloc(&pm_pool, newSize*sizeof(PmNode_t *),
 							(void*)&newLidMap);
 			if (rc != VSTATUS_OK || ! newLidMap) {
-                ret = FINSUFFICIENT_MEMORY;
+				ret = FINSUFFICIENT_MEMORY;
 				IB_LOG_ERRORRC("Failed to allocate PM Lid Map rc:", rc);
 				goto bail;
 			}
+			memset(newLidMap,0,newSize*sizeof(PmNode_t *));
 			if (newSize > pmimagep->lidMapSize) {
 				// growing
 				if (pmimagep->LidMap) {
@@ -1591,47 +1569,43 @@ static FSTATUS pm_copy_topology(Pm_t *pm)
 		}
 
 		//Update Active VFs
-		VirtualFabrics_t *VirtualFabrics = old_topology.vfs_ptr;
-		pm->numVFs = 0;
-		pm->numVFsActive = 0;
-		for (i = 0; i < VirtualFabrics->number_of_vfs_all; i++) {
-			PmVF_t *vfp = pm->VFs[pm->numVFs];
-			if(! vfp) continue;
+		if (recalc_flags & PM_TOPO_RECALC_VFS) {
+			VirtualFabrics_t *VirtualFabrics = old_topology.vfs_ptr;
+			pmimagep->NumVFs = 0;
+			pmimagep->NumVFsActive = 0;
+			for (i = 0; i < VirtualFabrics->number_of_vfs_all; i++) {
+				PmVF_t *vfp = &pmimagep->VFs[i];
+				vfp->isActive = 0;
 
-			if (strcmp(vfp->Name, VirtualFabrics->v_fabric_all[i].name) == 0){
-				if(VirtualFabrics->v_fabric_all[i].standby){
-					vfp->Image[imageIndex].isActive = 0;
-				} else {
-					vfp->Image[imageIndex].isActive = 1;
-					pm->numVFsActive++;
+				StringCopy(vfp->Name, VirtualFabrics->v_fabric_all[i].name, STL_PM_VFNAMELEN);
+				if(!VirtualFabrics->v_fabric_all[i].standby) {
+					vfp->isActive = 1;
+					pmimagep->NumVFsActive++;
 				}
-				pm->numVFs++;
-			} else{
-				IB_LOG_WARN_FMT(__func__, "PM VF list does not match SM VF: VF %d, SM: %.*s PM: %.*s ",
-								i, (int)sizeof(VirtualFabrics->v_fabric_all[i].name),
-								VirtualFabrics->v_fabric_all[i].name,
-								(int)sizeof(vfp->Name), vfp->Name);
+				pmimagep->NumVFs++;
 			}
-		}
-		for ( ; i < MAX_VFABRICS; i++) {
-			pm->VFs[i]->Image[imageIndex].isActive = 0;
-		}
-		if (pm->numVFs != VirtualFabrics->number_of_vfs_all) {
-			IB_LOG_WARN_FMT(__func__, "PM VF list count does not match SM VF list: SM count: %u PM count: %u",
-							VirtualFabrics->number_of_vfs_all, pm->numVFs);
-		}
-		if (pm->numVFsActive != VirtualFabrics->number_of_vfs) {
-			IB_LOG_WARN_FMT(__func__, "PM VF list Active count does not match SM VF list: SM count: %u PM count: %u",
-							VirtualFabrics->number_of_vfs, pm->numVFsActive);
+			for ( ; i < MAX_VFABRICS; i++) {
+				pmimagep->VFs[i].isActive = 0;
+				pmimagep->VFs[i].Name[0] = '\0';
+			}
+			if (pmimagep->NumVFs != VirtualFabrics->number_of_vfs_all) {
+				IB_LOG_WARN_FMT(__func__, "PM VF list count does not match SM VF list: SM count: %u PM count: %u",
+					VirtualFabrics->number_of_vfs_all, pmimagep->NumVFs);
+			}
+		} else {
+			PmImage_t *pmimageprevp = &pm->Image[pm->LastSweepIndex];
+			pmimagep->NumVFs = pmimageprevp->NumVFs;
+			pmimagep->NumVFsActive = pmimageprevp->NumVFsActive;
+			memcpy(pmimagep->VFs, pmimageprevp->VFs, sizeof(PmVF_t)*MAX_VFABRICS);
 		}
 
 		// copy all the ports which are in the new SM topology
 		// we will handle ports which have disappeared below
-		if (pm_topology_copy_active_ports(pm, sm_portp) == VSTATUS_NOMEM) {
-            ret = FINSUFFICIENT_MEMORY;
-            IB_LOG_ERRORRC("Failed to allocate copy of active ports rc:", VSTATUS_NOMEM);
-            goto bail;
-        }
+		if (pm_topology_copy_active_ports(pm, sm_portp, recalc_flags) == VSTATUS_NOMEM) {
+			ret = FINSUFFICIENT_MEMORY;
+			IB_LOG_ERRORRC("Failed to allocate copy of active ports rc:", VSTATUS_NOMEM);
+			goto bail;
+		}
 
 		// neighbors are handled below
 		pm->changed_count = topology_passcount; // topology_changed_count;
@@ -1645,7 +1619,7 @@ static FSTATUS pm_copy_topology(Pm_t *pm)
 	(void)vs_rwunlock(&old_topology_lock);
 
 	if (changed) {
-		uint16 lid;
+		STL_LID lid;
 		PmNode_t *pmnodep;
 
 		// free lids above new maxLid
@@ -1791,6 +1765,7 @@ FSTATUS decompressData(unsigned char *input_data, size_t input_size, unsigned ch
 
 struct decompress_args {
 	int thread_index;
+	Thread_t *thread_ptr;
 	unsigned char *input_data;
 	size_t input_size;
 	unsigned char *output_data;
@@ -1800,14 +1775,16 @@ struct decompress_args {
 void threadDecompress(uint32_t argc, uint8_t **argv) {
 	FSTATUS ret; 
 	int id;
+	Thread_t *thread_ptr;
 
-	if (argc != 5)
+	if (argc != 6)
 	{
 		IB_LOG_ERROR ("Internal errror, invalid arguments", argc);
 		return;
 	}
 
 	id =  ((struct decompress_args*)argv)->thread_index;
+	thread_ptr = ((struct decompress_args*)argv)->thread_ptr;
 
 	ret = decompressData(
 	  ((struct decompress_args*)argv)->input_data,
@@ -1822,7 +1799,7 @@ void threadDecompress(uint32_t argc, uint8_t **argv) {
 		return;
 	}
 
-	vs_thread_exit(&g_pmDecompressThreads[id]);
+	vs_thread_exit(thread_ptr);
 	return;
 }
 
@@ -1851,6 +1828,7 @@ void threadDecompress(uint32_t argc, uint8_t **argv) {
 FSTATUS decompressAndReassemble(unsigned char *input_data, size_t input_size, uint8 divs, uint64 *input_sizes, unsigned char *output_data, size_t output_size) {
 	uint32_t argc;
 	unsigned char name[VS_NAME_MAX] = "";
+	Thread_t *decompression_threads;
 
 	// first check divs, make sure it isn't over the max
 	if (divs > PM_MAX_COMPRESSION_DIVISIONS) {
@@ -1862,7 +1840,6 @@ FSTATUS decompressAndReassemble(unsigned char *input_data, size_t input_size, ui
 		IB_LOG_ERROR0("Unable to decompress, invalid data output size");
 		return FERROR;
 	}
-
 	unsigned char *input_pieces[divs];
 	// if numDivisions is 0, treat it as 1
 	if (divs == 0) divs = 1;
@@ -1883,6 +1860,11 @@ FSTATUS decompressAndReassemble(unsigned char *input_data, size_t input_size, ui
 		IB_LOG_ERROR0("Unable to decompress, invalid division sizes");
 		return FERROR;
 	}
+	decompression_threads = calloc(divs, sizeof(Thread_t));
+	if (decompression_threads == NULL) {
+		IB_LOG_ERROR0("Failed to allocate Thread_t Array for Decompression");
+		return FINSUFFICIENT_MEMORY;
+	}
 	// in parallel: call decompress on each piece
 	struct decompress_args args[divs];
 	int ret;
@@ -1890,25 +1872,27 @@ FSTATUS decompressAndReassemble(unsigned char *input_data, size_t input_size, ui
 	for (i = 0; i < divs; i++) {
 		//vthread_create does not accept thread_index = 0
 		args[i].thread_index = i+1;
+		args[i].thread_ptr = &decompression_threads[i];
 		args[i].input_data = input_pieces[i];
 		args[i].input_size = (size_t)input_sizes[i];
 		args[i].output_data = output_data + (i * len);
 		args[i].output_size = MIN(len, output_size - (i * len));
 
-		//argument count is 5
-		argc = 5;
+		//argument count is 6
+		argc = 6;
 		snprintf((char *)name,VS_NAME_MAX, "DecompressThr%d", i );
 
-		ret = vs_thread_create(&g_pmDecompressThreads[args[i].thread_index], name, threadDecompress, argc ,(uint8_t **)&args[i], PM_COMPRESS_THREAD_STACK_SIZE);
-		if (ret!= VSTATUS_OK) IB_LOG_ERROR0("Failed to create decompression thread");
+		ret = vs_thread_create(&decompression_threads[args[i].thread_index-1], name, threadDecompress, argc ,(uint8_t **)&args[i], PM_COMPRESS_THREAD_STACK_SIZE);
+		if (ret!= VSTATUS_OK) IB_LOG_ERROR_FMT(__func__, "Failed to create decompression thread (%d): %d", i, ret);
 	}
 
 	// wait for all of the threads to complete
 	for (i = 0; i < divs; i++) {
-		ret = vs_thread_join(&g_pmDecompressThreads[args[i].thread_index], NULL);
-		if (ret) IB_LOG_ERROR0("Failed to join Decompression thread");
+		ret = vs_thread_join(&decompression_threads[args[i].thread_index-1], NULL);
+		if (ret) IB_LOG_ERROR_FMT(__func__, "Failed to join Decompression thread (%d): %d", i, ret);
 	}
 
+	if (decompression_threads) free(decompression_threads);
 	return FSUCCESS;
 }
 
@@ -1977,6 +1961,7 @@ static FSTATUS compressData(unsigned char *input_data, size_t input_size, unsign
 // data needed for the compress thread
 struct compress_args {
 	int thread_index;
+	Thread_t *thread_ptr;
 	unsigned char *input_data;
 	size_t input_size;
 	unsigned char **output_data;
@@ -1986,14 +1971,16 @@ struct compress_args {
 void threadCompress(uint32_t argc, uint8_t **argv) {
 	FSTATUS ret; 
 	int id;
+	Thread_t *thread_ptr;
 
-	if (argc != 5) // the check avoids variable not used warning
+	if (argc != 6) // the check avoids variable not used warning
 	{
 		IB_LOG_ERROR ("Internal errror, invalid arguments", 0);
 		return;
 	}
 
 	id = ((struct compress_args*)argv)->thread_index;
+	thread_ptr = ((struct compress_args*)argv)->thread_ptr;
 
 	ret = compressData(
 	   ((struct compress_args*)argv)->input_data,
@@ -2006,7 +1993,7 @@ void threadCompress(uint32_t argc, uint8_t **argv) {
 		IB_LOG_ERROR ("PM compress thread did not compress ID:", id);
 		return;
 	}
-	vs_thread_exit(&g_pmCompressThreads[id]);
+	vs_thread_exit(thread_ptr);
 	return;
 }
 
@@ -2031,6 +2018,7 @@ void threadCompress(uint32_t argc, uint8_t **argv) {
 FSTATUS divideAndCompress(unsigned char *input_data, size_t input_size, unsigned char **compressed_divisions, size_t *compressed_lengths) {
 	uint32_t argc;
 	unsigned char name[VS_NAME_MAX] = "";
+	Thread_t *compression_threads;
 
 	if (pm_config.shortTermHistory.compressionDivisions == 0) {
 		// really this shouldn't be possible, but better to be safe
@@ -2042,34 +2030,41 @@ FSTATUS divideAndCompress(unsigned char *input_data, size_t input_size, unsigned
 	size_t len = (input_size % pm_config.shortTermHistory.compressionDivisions ? 
 				  (input_size / pm_config.shortTermHistory.compressionDivisions) + 1:
 				  (input_size / pm_config.shortTermHistory.compressionDivisions));
-	int i;
+	int i = 0;
 
+	compression_threads = calloc(pm_config.shortTermHistory.compressionDivisions, sizeof(Thread_t));
+	if (compression_threads == NULL) {
+		IB_LOG_ERROR0("Failed to allocate Thread_t Array for Compression");
+		return FINSUFFICIENT_MEMORY;
+	}
 	// in parallel: call compressData on each division
 	struct compress_args args[pm_config.shortTermHistory.compressionDivisions];
+	memset(args, 0, sizeof(struct compress_args)*(pm_config.shortTermHistory.compressionDivisions));
 	int ret;
 
 	for (i = 0; i < pm_config.shortTermHistory.compressionDivisions; i++) {
 		//vthread_create does not accept thread_index = 0
 		args[i].thread_index = i+1;
+		args[i].thread_ptr = &compression_threads[i];
 		args[i].input_data = input_data + (i * len);
 		args[i].input_size = MIN(len, input_size - (i * len));
 		args[i].output_data = &compressed_divisions[i];
 		args[i].output_size = &compressed_lengths[i];
 
-		//argument count is 5
-		argc = 5;
+		//argument count is 6
+		argc = 6;
 		snprintf((char *)name,VS_NAME_MAX, "CompressThr%d", i );
-		ret = vs_thread_create(&g_pmCompressThreads[args[i].thread_index], name, threadCompress, argc ,(uint8_t **)&args[i], PM_COMPRESS_THREAD_STACK_SIZE);
-		if (ret!= VSTATUS_OK) IB_LOG_ERROR0("Failed to create compression thread");
+		ret = vs_thread_create(&compression_threads[args[i].thread_index-1], name, threadCompress, argc ,(uint8_t **)&args[i], PM_COMPRESS_THREAD_STACK_SIZE);
+		if (ret != VSTATUS_OK) IB_LOG_ERROR_FMT(__func__, "Failed to create compression thread (%d): %d", i, ret);
 	}
 
 	// wait for all of the threads to complete
 	for (i = 0; i < pm_config.shortTermHistory.compressionDivisions; i++) {
-		ret = vs_thread_join(&g_pmCompressThreads[args[i].thread_index], NULL);
-		if (ret) IB_LOG_ERROR0("Failed to join compression thread");
+		ret = vs_thread_join(&compression_threads[args[i].thread_index-1], NULL);
+		if (ret) IB_LOG_ERROR_FMT(__func__, "Failed to join compression thread (%d): %d", i, ret);
 	}
 
-
+	if (compression_threads) free(compression_threads);
 	return FSUCCESS;
 }
 
@@ -2088,13 +2083,18 @@ FSTATUS divideAndCompress(unsigned char *input_data, size_t input_size, unsigned
 *  
 *************************************************************************************/
 FSTATUS rebuildComposite(PmCompositeImage_t *cimg, unsigned char *data, uint32 history_version) {
-	unsigned char *loc = data;
+	uint8_t *loc = data;
 	int i, j;
 
-	if (history_version == PM_HISTORY_VERSION || history_version == PM_HISTORY_VERSION_OLD) {
+	if (history_version == PM_HISTORY_VERSION) {
 		// Copy everything except for the node pointer at the end of the struct
 		memcpy((unsigned char *)cimg + sizeof(PmFileHeader_t), loc, (sizeof(PmCompositeImage_t) - (sizeof(PmFileHeader_t) + sizeof(PmCompositeNode_t **))));
 		loc += (sizeof(PmCompositeImage_t) - (sizeof(PmFileHeader_t) + sizeof(PmCompositeNode_t **)));
+#ifndef __VXWORKS__
+	} else if (history_version == PM_HISTORY_VERSION_OLD) {
+		// Handle change in MAX_VFABRICS form 32 to 1000
+		loc += PaSthOldCompositeImageToCurrent(cimg, loc - sizeof(PmFileHeader_t));
+#endif /* __VXWORKS__ */
 	} else {
 		return FINVALID_PARAMETER;
 	}
@@ -2108,9 +2108,15 @@ FSTATUS rebuildComposite(PmCompositeImage_t *cimg, unsigned char *data, uint32 h
 		if (!cimg->nodes[i]) {
 			return FINSUFFICIENT_MEMORY;
 		}
-		memcpy(cimg->nodes[i], loc, (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t**)));
-		loc += (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t**));
-		if (cimg->nodes[i]->numPorts == 0) 
+		if (history_version == PM_HISTORY_VERSION) {
+			memcpy(cimg->nodes[i], loc, (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t **)));
+			loc += (sizeof(PmCompositeNode_t) - sizeof(PmCompositePort_t**));
+#ifndef __VXWORKS__
+		} else if (history_version == PM_HISTORY_VERSION_OLD) {
+			loc += PaSthOldCompositeNodeToCurrent(cimg->nodes[i], loc);
+#endif /* __VXWORKS__ */
+		}
+		if (cimg->nodes[i]->numPorts == 0)
 			continue;
 		if (cimg->nodes[i]->nodeType == STL_NODE_SW) {
 			cimg->nodes[i]->ports = calloc(1, (sizeof(cimg->nodes[i]->ports)*(cimg->nodes[i]->numPorts + 1)));
@@ -2123,8 +2129,14 @@ FSTATUS rebuildComposite(PmCompositeImage_t *cimg, unsigned char *data, uint32 h
 				if (!cimg->nodes[i]->ports[j]) {
 					return FINSUFFICIENT_MEMORY;
 				}
-				memcpy(cimg->nodes[i]->ports[j], loc, sizeof(PmCompositePort_t));
-				loc += sizeof(PmCompositePort_t);
+				if (history_version == PM_HISTORY_VERSION) {
+					memcpy(cimg->nodes[i]->ports[j], loc, sizeof(PmCompositePort_t));
+					loc += sizeof(PmCompositePort_t);
+#ifndef __VXWORKS__
+				} else if (history_version == PM_HISTORY_VERSION_OLD) {
+					loc += PaSthOldCompositePortToCurrent(cimg->nodes[i]->ports[j], loc);
+#endif /* __VXWORKS__ */
+				}
 			}
 		} else {
 			cimg->nodes[i]->ports = calloc(1, sizeof(cimg->nodes[i]->ports));
@@ -2135,8 +2147,14 @@ FSTATUS rebuildComposite(PmCompositeImage_t *cimg, unsigned char *data, uint32 h
 			if (!cimg->nodes[i]->ports[0]) {
 				return FINSUFFICIENT_MEMORY;
 			}
-			memcpy(cimg->nodes[i]->ports[0], loc, sizeof(PmCompositePort_t));
-			loc += sizeof(PmCompositePort_t);
+			if (history_version == PM_HISTORY_VERSION) {
+				memcpy(cimg->nodes[i]->ports[0], loc, sizeof(PmCompositePort_t));
+				loc += sizeof(PmCompositePort_t);
+#ifndef __VXWORKS__
+			} else if (history_version == PM_HISTORY_VERSION_OLD) {
+				loc += PaSthOldCompositePortToCurrent(cimg->nodes[i]->ports[0], loc);
+#endif /* __VXWORKS__ */
+			}
 		}
 	}
 	return FSUCCESS;
@@ -2280,21 +2298,12 @@ static PmCompositePort_t *createCompositePort(PmPort_t *port, PmCompositeImage_t
 	for (x = 0; x < MAX_VFABRICS; x++) {
 		// use -1 to indicated no assignment
 		cport->compVfVlmap[x].VF = -1;
-		PmVF_t *VF = port->Image[imageIndex].vfvlmap[x].pVF;
 		uint32 vlmask = port->Image[imageIndex].vfvlmap[x].vlmask;
-		if (!VF) {
+		if (vlmask == 0) {
 			continue;
 		}
-		for (y = 0; y < MAX_VFABRICS; y++) {
-			// look through all of the VFs that are listed in this composite
-			PmCompositeVF_t cVF = cimg->VFs[y];
-			// if the VF names match, then assign the index
-			if (strcmp(cVF.name, VF->Name) == 0) {
-				cport->compVfVlmap[x].VF = y;
-				cport->compVfVlmap[x].vlmask = vlmask;
-				break;
-			}
-		}
+		cport->compVfVlmap[x].VF = x;
+		cport->compVfVlmap[x].vlmask = vlmask;
 	}
 	return cport;
 }
@@ -2324,11 +2333,13 @@ static PmCompositeNode_t *createCompositeNode(PmNode_t *node, PmCompositeImage_t
 		return cnode;	// return an empty (but non-null) composite node
 
 	// set the values
-	cnode->guid = node->guid;
+	cnode->NodeGUID = node->NodeGUID;
+	cnode->SystemImageGUID = node->SystemImageGUID;
 	memcpy(&(cnode->nodeDesc), &(node->nodeDesc), sizeof(cnode->nodeDesc));
 	cnode->lid = node->Image[imageIndex].lid;
 	cnode->nodeType = node->nodeType;
 	cnode->numPorts = node->numPorts;
+
 
 	if (node->nodeType == STL_NODE_SW) {
 		// use numPorts+1 because of port 0
@@ -2385,27 +2396,11 @@ cleanup:
 
 static void copyCompositeGroup(PmGroup_t *group, PmCompositeGroup_t *cgroup, uint64 imageIndex) {
 	memcpy(cgroup->name, group->Name, STL_PM_GROUPNAMELEN);
-	cgroup->numIntPorts = group->Image[imageIndex].NumIntPorts;
-	cgroup->numExtPorts = group->Image[imageIndex].NumExtPorts;
-	cgroup->minIntRate = group->Image[imageIndex].MinIntRate;
-	cgroup->maxIntRate = group->Image[imageIndex].MaxIntRate;
-	cgroup->minExtRate = group->Image[imageIndex].MinExtRate;
-	cgroup->maxExtRate = group->Image[imageIndex].MaxExtRate;
-	memcpy(&(cgroup->intUtil), &(group->Image[imageIndex].IntUtil), sizeof(cgroup->intUtil));
-	memcpy(&(cgroup->sendUtil), &(group->Image[imageIndex].SendUtil), sizeof(cgroup->sendUtil));
-	memcpy(&(cgroup->recvUtil), &(group->Image[imageIndex].RecvUtil), sizeof(cgroup->recvUtil));
-	memcpy(&(cgroup->intErr), &(group->Image[imageIndex].IntErr), sizeof(cgroup->intErr));
-	memcpy(&(cgroup->extErr), &(group->Image[imageIndex].ExtErr), sizeof(cgroup->extErr));
 }
 
 static void copyCompositeVF(PmVF_t *VF, PmCompositeVF_t *cVF, uint64 imageIndex) {
-	memcpy(&(cVF->name), &(VF->Name), MAX_VFABRIC_NAME);
-	cVF->isActive = VF->Image->isActive;
-	cVF->numPorts = VF->Image->NumPorts;
-	cVF->minIntRate = VF->Image->MinIntRate;
-	cVF->maxIntRate = VF->Image->MaxIntRate;
-	memcpy(&(cVF->intUtil), &(VF->Image->IntUtil), sizeof(cVF->intUtil));
-	memcpy(&(cVF->intErr), &(VF->Image->IntErr), sizeof(cVF->intErr));
+	memcpy(cVF->name, VF->Name, MAX_VFABRIC_NAME);
+	cVF->isActive = VF->isActive;
 }
 
 #ifndef __VXWORKS__
@@ -2526,11 +2521,11 @@ PmCompositeImage_t *PmCreateComposite(Pm_t *pm, uint32 imageIndex, uint8 isCompr
 	cimg->header.common.historyVersion = PM_HISTORY_VERSION;
 	cimg->header.common.isCompressed = isCompressed;
 	cimg->header.common.imagesPerComposite = 1;
-	cimg->header.common.imageSweepInterval = MAX(pm_config.sweep_interval, (img->sweepDuration/1000000));
+	cimg->header.common.imageSweepInterval = img->imageInterval;
 	cimg->header.common.imageTime = (uint32)img->sweepStart;
 	cimg->header.common.imageIDs[0] = buildShortTermHistoryImageId(pm, imageIndex);
 	
-	// initialize the composite vales from the image
+	// initialize the composite values from the image
 	cimg->sweepStart = (uint64)img->sweepStart;
 	cimg->sweepDuration = img->sweepDuration;
 	cimg->HFIPorts = img->HFIPorts;
@@ -2544,26 +2539,23 @@ PmCompositeImage_t *PmCreateComposite(Pm_t *pm, uint32 imageIndex, uint8 isCompr
 	cimg->skippedPorts = img->SkippedPorts;
 	cimg->unexpectedClearPorts = img->UnexpectedClearPorts;
 	cimg->downgradedPorts = img->DowngradedPorts;
-	cimg->numGroups = pm->NumGroups;
-	cimg->numVFs = pm->numVFs;
-	cimg->numVFsActive = pm->numVFsActive;
+	cimg->numGroups = img->NumGroups;
+	cimg->numVFs = img->NumVFs;
+	cimg->numVFsActive = img->NumVFsActive;
 	cimg->maxLid = img->maxLid;
 	cimg->numPorts = 0;
 	memcpy(cimg->SMs, img->SMs, sizeof(cimg->SMs[0]) * PM_HISTORY_MAX_SMS_PER_COMPOSITE);
 	
 	// copy all of the groups
-	copyCompositeGroup(pm->AllPorts, &(cimg->allPortsGroup), pm->history[imageIndex]);
-	for (i = 0; i < pm->NumGroups; i++) {
-		PmGroup_t *group = pm->Groups[i];
-		if (!group) 
-			continue;
+	for (i = 0; i < img->NumGroups; i++) {
+		PmGroup_t *group = &img->Groups[i];
+		if (group->Name[0] == '\0') continue;
 		copyCompositeGroup(group, &(cimg->groups[i]), pm->history[imageIndex]);
 	}
 	// do the same thing for VFs
-	for (i = 0; i < pm->numVFs; i++) {
-		PmVF_t *VF = pm->VFs[i];
-		if (!VF)
-			continue;
+	for (i = 0; i < img->NumVFs; i++) {
+		PmVF_t *VF = &img->VFs[i];
+		if (VF->Name[0] == '\0') continue;
 		copyCompositeVF(VF, &(cimg->VFs[i]), pm->history[imageIndex]);
 	}
 	// nodes
@@ -2690,42 +2682,20 @@ FSTATUS compoundImage(Pm_t *pm, uint32 imageIndex, PmCompositeImage_t *cimg) {
 
 	// update the header
 	cimg->header.common.imageIDs[cimg->header.common.imagesPerComposite] = buildShortTermHistoryImageId(pm, imageIndex);
-	cimg->header.common.imageSweepInterval += MAX(pm_config.sweep_interval, (img->sweepDuration/1000000));
+	cimg->header.common.imageSweepInterval += img->imageInterval;
 
 	//store average sweep duration
 	cimg->sweepDuration = (cimg->sweepDuration * cimg->header.common.imagesPerComposite + img->sweepDuration)
 		                 /(cimg->header.common.imagesPerComposite + 1);
 
-	// groups
-	int i;
-	for (i = 0; i < PM_MAX_GROUPS; i++) {
-		PmCompositeGroup_t *cgroup = &(cimg->groups[i]);
-		PmGroup_t *group = pm->Groups[i];
-		if (strcmp(cgroup->name, group->Name)) {
-			IB_LOG_WARN_FMT(__func__, "Group names are different- Expected: %s, Got: %s", cgroup->name, group->Name);
-			memcpy(cgroup->name, group->Name, STL_PM_GROUPNAMELEN);
-		}
-	}
-
-	// VFs
-	for (i = 0; i < MAX_VFABRICS; i++) {
-		PmCompositeVF_t *cVF = &(cimg->VFs[i]);
-		PmVF_t *VF = pm->VFs[i];
-		if (strcmp(cVF->name, VF->Name)) {
-			IB_LOG_WARN_FMT(__func__, "VF Names are different: %s %s", cVF->name, VF->Name);
-			memcpy(cVF->name, VF->Name, MAX_VFABRIC_NAME);
-		}
-		cVF->isActive = VF->Image[pm->history[imageIndex]].isActive;
-	}
-
 	// Nodes/Ports
-	STL_LID_32 lid;
+	STL_LID lid;
 	int j;
 	for (lid = 1; lid <= MIN(cimg->maxLid, img->maxLid); ++lid){
 		PmCompositeNode_t *cnode = cimg->nodes[lid];
 		PmNode_t *node = img->LidMap[lid];
 
-		if (!node || !cnode || (cnode->guid != node->guid)) continue;
+		if (!node || !cnode || (cnode->NodeGUID != node->NodeGUID)) continue;
 
 		for (j = 0; j < cnode->numPorts; ++j){
 			PmCompositePort_t *cport = cnode->ports[j];
@@ -2785,90 +2755,37 @@ void clearLoadedImage(PmShortTermHistory_t *sth) {
 		free(sth->LoadedImage.img);
 		sth->LoadedImage.img = NULL;
 	}
-	if (sth->LoadedImage.AllGroup) {
-		free(sth->LoadedImage.AllGroup);
-		sth->LoadedImage.AllGroup = NULL;
-	}
-	for (i = 0; i < PM_MAX_GROUPS; i++) {
-		if (sth->LoadedImage.Groups[i]) {
-			free(sth->LoadedImage.Groups[i]);
-			sth->LoadedImage.Groups[i] = NULL;
-		}
-	}
-	for (i = 0; i < MAX_VFABRICS; i++) {
-		if (sth->LoadedImage.VFs[i]) {
-			free(sth->LoadedImage.VFs[i]);
-			sth->LoadedImage.VFs[i] = NULL;
-		}
-	}
 }
 
-/************************************************************************************* 
-    PmReconstituteVFImage - Reconstitute a compoiste VF into a VF
- 
-    Inputs:
-    	cVF - the composite VF
-    	
-    Returns:
-    	The reconstituted VF
- 
-*************************************************************************************/ 
-PmVF_t *PmReconstituteVFImage(PmCompositeVF_t *cVF) {
-	PmVF_t *pmVFP;
-	pmVFP = calloc(1, sizeof(PmVF_t));
-	if (!pmVFP) {
-		IB_LOG_ERROR0("Unable to allocate memory to reconstitute PM VF Image");
-		return NULL;
-	}
-	cs_strlcpy(pmVFP->Name, cVF->name, MAX_VFABRIC_NAME);
-	pmVFP->Image[0].isActive = cVF->isActive;
-	pmVFP->Image[0].NumPorts = cVF->numPorts;
-	pmVFP->Image[0].MinIntRate = cVF->minIntRate;
-	pmVFP->Image[0].MaxIntRate = cVF->maxIntRate;
-	memcpy(&(pmVFP->Image[0].IntUtil), &(cVF->intUtil), sizeof(PmUtilStats_t));
-	memcpy(&(pmVFP->Image[0].IntErr), &(cVF->intErr), sizeof(PmErrStats_t));
-	return pmVFP;
+/**
+ * PmReconstituteVFImage - Reconstitute a compoiste VF into a VF
+ *
+ * @param cVF - Composite VF
+ * @param pmVFP - In-Memory VF
+ */
+void PmReconstituteVFImage(PmCompositeVF_t *cVF, PmVF_t *pmVFP) {
+
+	StringCopy(pmVFP->Name, cVF->name, MAX_VFABRIC_NAME);
+	pmVFP->isActive = cVF->isActive;
 }
 
-/************************************************************************************* 
-    PmReconstituteGroupImage - Reconstitute a compoiste group into a group
- 
-    Inputs:
-    	cgroup - the composite group
-    	
-    Returns:
-    	The reconstituted group
- 
-*************************************************************************************/ 
-PmGroup_t *PmReconstituteGroupImage(PmCompositeGroup_t *cgroup)  {
-	PmGroup_t *pmGroupP;
-	pmGroupP = calloc(1, sizeof(PmGroup_t));
-	if (!pmGroupP) {
-		IB_LOG_ERROR0("Unable to allocate memory to reconstitute PM Group Image");
-		return NULL;
-	}
-	cs_strlcpy(pmGroupP->Name, cgroup->name, STL_PM_GROUPNAMELEN);
-	pmGroupP->Image[0].NumIntPorts = cgroup->numIntPorts;
-	pmGroupP->Image[0].NumExtPorts = cgroup->numExtPorts;
-	pmGroupP->Image[0].MinIntRate = cgroup->minIntRate;
-	pmGroupP->Image[0].MaxIntRate = cgroup->maxIntRate;
-	pmGroupP->Image[0].MinExtRate = cgroup->minExtRate;
-	pmGroupP->Image[0].MaxExtRate = cgroup->maxExtRate;
-	memcpy(&(pmGroupP->Image[0].IntUtil), &(cgroup->intUtil), sizeof(PmUtilStats_t));
-	memcpy(&(pmGroupP->Image[0].SendUtil), &(cgroup->sendUtil), sizeof(PmUtilStats_t));
-	memcpy(&(pmGroupP->Image[0].RecvUtil), &(cgroup->recvUtil), sizeof(PmUtilStats_t));
-	memcpy(&(pmGroupP->Image[0].IntErr), &(cgroup->intErr), sizeof(PmErrStats_t));
-	memcpy(&(pmGroupP->Image[0].ExtErr), &(cgroup->extErr), sizeof(PmErrStats_t));
+/**
+ * PmReconstituteGroupImage - Reconstitute a compoiste group into a group
+ *
+ * @param cgroup - Composite Group
+ * @param pmGroupP - In-Memory Group
+ */
+void PmReconstituteGroupImage(PmCompositeGroup_t *cgroup, PmGroup_t *pmGroupP) {
 
-	return pmGroupP;
+	StringCopy(pmGroupP->Name, cgroup->name, STL_PM_GROUPNAMELEN); 
 }
 
 /************************************************************************************* 
     PmReconstitutePortImage - Reconstitute a compoiste port into a port
  
     Inputs:
-	    sth - PM Short Term History
-    	cport - the composite port
+        img - new PM Short Term History image
+        cport - the composite port
     	
     Returns:
     	The reconstituted port
@@ -2878,7 +2795,7 @@ PmGroup_t *PmReconstituteGroupImage(PmCompositeGroup_t *cgroup)  {
     	image in order for them to get properly assigned for this port
  
 *************************************************************************************/ 
-PmPort_t *PmReconstitutePortImage(PmShortTermHistory_t *sth, PmCompositePort_t *cport) {
+PmPort_t *PmReconstitutePortImage(PmImage_t *img, PmCompositePort_t *cport) {
 	PmPort_t *pmportp;
 	pmportp = calloc(1, sizeof(PmPort_t)); 
 	if (!pmportp) {
@@ -2898,23 +2815,13 @@ PmPort_t *PmReconstitutePortImage(PmShortTermHistory_t *sth, PmCompositePort_t *
 	int i;
 	for (i = 0; i < PM_MAX_GROUPS_PER_PORT; i++) {
 		if (cport->groups[i] != (uint8)-1) { // -1 means no group
-			pmportp->Image[0].Groups[i] = sth->LoadedImage.Groups[cport->groups[i]];
+			pmportp->Image[0].Groups[i] = &img->Groups[cport->groups[i]];
 		} else {
 			pmportp->Image[0].Groups[i] = NULL;
 		}
 	}
-	uint8 sthVFidx;
-	for (i=0; i<MAX_VFABRICS; i++) {
-		sthVFidx = cport->compVfVlmap[i].VF;
-		if (sthVFidx == (uint8) -1) {
-			pmportp->Image[0].vfvlmap[i].pVF =  NULL;
-		} else if (sthVFidx >= MAX_VFABRICS) {
-			IB_LOG_ERROR_FMT(__func__,"Invalid VF index %d",sthVFidx);
-			pmportp->Image[0].vfvlmap[i].pVF =  NULL;
-		} else {
-			pmportp->Image[0].vfvlmap[i].vlmask = cport->compVfVlmap[i].vlmask;
-			pmportp->Image[0].vfvlmap[i].pVF = sth->LoadedImage.VFs[sthVFidx];
-		}
+	for (i = 0; i < MAX_VFABRICS; i++) {
+		pmportp->Image[0].vfvlmap[i].vlmask = cport->compVfVlmap[i].vlmask;
 	}
 
 	pmportp->Image[0].vlSelectMask = cport->vlSelectMask;
@@ -2933,17 +2840,17 @@ PmPort_t *PmReconstitutePortImage(PmShortTermHistory_t *sth, PmCompositePort_t *
     PmReconstituteNodeImage - Reconstitute a compoiste node into a node
  
     Inputs:
-	    sth - PM Short Term History
-    	cnode - the composite node
+        img - new PM Short Term History image
+        cnode - the composite node
     	
     Returns:
     	The reconstituted node
  
 *************************************************************************************/ 
-PmNode_t *PmReconstituteNodeImage(PmShortTermHistory_t *sth, PmCompositeNode_t *cnode) {
+PmNode_t *PmReconstituteNodeImage(PmImage_t *img, PmCompositeNode_t *cnode) {
 	PmNode_t *pmnodep;
 
-	if (!cnode->guid) {
+	if (!cnode->NodeGUID) {
 		// if there is no guid, then it was a NULL node
 		return NULL;
 	}
@@ -2957,8 +2864,10 @@ PmNode_t *PmReconstituteNodeImage(PmShortTermHistory_t *sth, PmCompositeNode_t *
 	memcpy(&pmnodep->nodeDesc, &cnode->nodeDesc, sizeof(STL_NODE_DESCRIPTION));
 	pmnodep->nodeType = cnode->nodeType;
 	pmnodep->numPorts = cnode->numPorts;
-	pmnodep->guid = cnode->guid;
+	pmnodep->NodeGUID = cnode->NodeGUID;
+	pmnodep->SystemImageGUID = cnode->SystemImageGUID;
 	pmnodep->Image[0].lid = cnode->lid;
+
 
 	// ports
 	if (cnode->ports) {			
@@ -2972,14 +2881,14 @@ PmNode_t *PmReconstituteNodeImage(PmShortTermHistory_t *sth, PmCompositeNode_t *
 			for (i = 0; i <= pmnodep->numPorts; i++) {
 				if (!cnode->ports[i]) 
 					continue;
-				pmnodep->up.swPorts[i] = PmReconstitutePortImage(sth, cnode->ports[i]);
+				pmnodep->up.swPorts[i] = PmReconstitutePortImage(img, cnode->ports[i]);
 				if (!pmnodep->up.swPorts[i]) {
 					//reconstituting the port failed!!!
 					goto cleanup;
 				}
 			}
 		} else {
-			pmnodep->up.caPortp = PmReconstitutePortImage(sth, cnode->ports[0]);
+			pmnodep->up.caPortp = PmReconstitutePortImage(img, cnode->ports[0]);
 			if (!pmnodep->up.caPortp) {
 				//reconstituting the port failed!!!
 				goto cleanup;
@@ -3022,16 +2931,20 @@ cleanup:
 *   	Status - FSUCCESS if okay
 * 
 *************************************************************************************/
-PmImage_t *PmReconstituteImage(PmShortTermHistory_t *sth, PmCompositeImage_t *cimg) {
+PmImage_t *PmReconstituteImage(PmCompositeImage_t *cimg) {
 	PmImage_t *img;
+	int i;
+
 	img = calloc(1, sizeof(PmImage_t));
 	if (!img) {
 		IB_LOG_ERROR0("Unable to allocate memory to reconstitute image");
 		return NULL;
 	}
+
 	img->maxLid = cimg->maxLid;
 	img->sweepStart = (time_t)cimg->sweepStart;
 	img->sweepDuration = cimg->sweepDuration;
+	img->imageInterval = cimg->header.common.imageSweepInterval;
 	img->HFIPorts = cimg->HFIPorts;
 	img->SwitchNodes = cimg->switchNodes;
 	img->SwitchPorts = cimg->switchPorts;
@@ -3044,20 +2957,32 @@ PmImage_t *PmReconstituteImage(PmShortTermHistory_t *sth, PmCompositeImage_t *ci
 	img->SkippedPorts = cimg->skippedPorts;
 	img->UnexpectedClearPorts  = cimg->unexpectedClearPorts;
 	img->DowngradedPorts  = cimg->downgradedPorts;
+
+	img->NumGroups = cimg->numGroups;
+	for (i = 0; i < img->NumGroups && i < PM_MAX_GROUPS; i++) {
+		PmReconstituteGroupImage(&cimg->groups[i], &img->Groups[i]);
+	}
+
+	img->NumVFs = cimg->numVFs;
+	img->NumVFsActive = cimg->numVFsActive;
+	for (i = 0; i < img->NumVFs && i < MAX_VFABRICS; i++) {
+		PmReconstituteVFImage(&cimg->VFs[i], &img->VFs[i]);
+	}
+
 	// lid map
 	img->LidMap = calloc(1, sizeof(PmNode_t*)*(img->maxLid+1));
 	if (!img->LidMap) {
-		free(img);
-		return NULL;
+		goto fail;
 	}
 	img->lidMapSize = img->maxLid + 1;
-
-	int i;
 	for (i = 0; i <= img->maxLid; i++) {
-		img->LidMap[i] = PmReconstituteNodeImage(sth, cimg->nodes[i]);
+		img->LidMap[i] = PmReconstituteNodeImage(img, cimg->nodes[i]);
 	}
 
 	return img;
+fail:
+	free(img);
+	return NULL;
 }
 
 /************************************************************************************* 
@@ -3074,27 +2999,16 @@ PmImage_t *PmReconstituteImage(PmShortTermHistory_t *sth, PmCompositeImage_t *ci
 FSTATUS PmReconstitute(PmShortTermHistory_t *sth, PmCompositeImage_t *cimg) {
 	int i;
 
+	/* Check if requested Image is already loaded */
+	if (sth->LoadedImage.img
+		&& (sth->LoadedImage.img->sweepStart == cimg->sweepStart))
+	{
+		return FSUCCESS;
+	}
 	// clear out whatever is in there first
 	clearLoadedImage(sth);
-
-	sth->LoadedImage.AllGroup = PmReconstituteGroupImage(&cimg->allPortsGroup);
-	if (!sth->LoadedImage.AllGroup) {
-		goto cleanup;
-	}
-	for (i = 0; i < PM_MAX_GROUPS; i++) {
-		sth->LoadedImage.Groups[i] = PmReconstituteGroupImage(&cimg->groups[i]);
-		if (!sth->LoadedImage.Groups[i]) {
-			goto cleanup;
-		}
-	}
-	for (i = 0; i < MAX_VFABRICS; i++) {
-		sth->LoadedImage.VFs[i] = PmReconstituteVFImage(&cimg->VFs[i]);
-		if (!sth->LoadedImage.VFs[i]) {
-			goto cleanup;
-		}
-	}
 	// convert the data in cimg to image data
-	sth->LoadedImage.img = PmReconstituteImage(sth, cimg);
+	sth->LoadedImage.img = PmReconstituteImage(cimg);
 	if (!sth->LoadedImage.img) {
 		goto cleanup;
 	}
@@ -3135,6 +3049,27 @@ cleanup:
 	return FERROR;
 }
 
+/************************************************************************************* 
+*	markImagesAsDisk - Mark composite images / historyRecords as originating from disk
+*
+*	Inputs:
+*		ch - PmHistoryHeaderCommon_t from composite image or History Record.
+*
+*	This function will modify imageIDs contained in the the given header structure 
+*	to indicate they originated from a disk stored image. 
+*************************************************************************************/ 
+static void markImagesAsDisk(PmHistoryHeaderCommon_t *ch)
+{
+	size_t i;
+
+	for (i = 0; i < PM_HISTORY_MAX_IMAGES_PER_COMPOSITE; ++i) {
+		ImageId_t temp = {.AsReg64 = ch->imageIDs[i] };
+		if (temp.AsReg64) {
+			temp.s.type = IMAGEID_TYPE_HISTORY_DISK;
+			ch->imageIDs[i] = temp.AsReg64;
+		}
+	}
+}
 /************************************************************************************* 
 *   loadComposite - load a composite image from a file
 *  
@@ -3209,10 +3144,13 @@ FSTATUS PmLoadComposite(Pm_t *pm, PmHistoryRecord_t *record, PmCompositeImage_t 
 	history_version = ((PmFileHeader_t *)raw_data)->common.historyVersion;
 	if (history_version != PM_HISTORY_VERSION && history_version != PM_HISTORY_VERSION_OLD) {
 #ifdef __VXWORKS__
-		IB_LOG_ERROR0("Loaded PM history image that does not match current supported versions");
+		IB_LOG_ERROR0("Loaded PM history image does not match current supported versions");
 #else
-		IB_LOG_ERROR_FMT(__func__, "Loaded PM history image that does not match current supported versions: %s Supported Versions: %d, %d  File Version: %d",
-			record->header.filename, PM_HISTORY_VERSION, PM_HISTORY_VERSION_OLD, history_version);
+		IB_LOG_ERROR_FMT(__func__,
+			"Loaded PM history image (%s, v%u.%u) does not match current supported versions: v%u.%u or v%u.%u",
+			record->header.filename, ((history_version >> 24) & 0xFF), (history_version & 0x00FFFFFF),
+			((PM_HISTORY_VERSION >> 24) & 0xFF), (PM_HISTORY_VERSION & 0x00FFFFFF),
+			((PM_HISTORY_VERSION_OLD >> 24) & 0xFF), (PM_HISTORY_VERSION_OLD & 0x00FFFFFF));
 #endif
 		free(raw_data);
 		fclose(fp);
@@ -3284,6 +3222,7 @@ FSTATUS PmLoadComposite(Pm_t *pm, PmHistoryRecord_t *record, PmCompositeImage_t 
 		*cimg = NULL;
 		ret = FNOT_FOUND;
 	}
+	markImagesAsDisk(&((*cimg)->header.common));
 end:
 	free(img_data);	
 	fclose(fp);
@@ -3590,6 +3529,7 @@ FSTATUS storeComposite(Pm_t *pm, PmCompositeImage_t *cimg) {
 
 		// don't compress the header
 		ret = divideAndCompress(data + sizeof(PmFileHeader_t), len - sizeof(PmFileHeader_t), compressed_divisions, compressed_sizes);
+		if (ret) goto error;
 
 		writeLen = sizeof(PmFileHeader_t);
 		for (i=0; i < pm_config.shortTermHistory.compressionDivisions; i++) {
@@ -3732,6 +3672,7 @@ FSTATUS compoundNewImage(Pm_t *pm) {
 		MemoryClear(rec, sizeof(PmHistoryRecord_t));
 		// update the record
 		memcpy(&rec->header, &(pm->ShortTermHistory.currentComposite->header.common), sizeof(PmHistoryHeaderCommon_t));
+		markImagesAsDisk(&rec->header);
 		rec->index = cindex;
 		// update the map
 		cl_map_item_t *mi;
@@ -3934,7 +3875,7 @@ store_file:
 	// Update the record.  Only fill in the filename. Leave the images
 	// per composite as zero. This is all the Standby cares about.
 	// If/When we become Master, we'll reread the history.
-	snprintf(rec->header.filename, sizeof(rec->header.filename), newfilename);
+	StringCopy(rec->header.filename, newfilename, sizeof(rec->header.filename));
 	for (i = 0; i < PM_HISTORY_MAX_IMAGES_PER_COMPOSITE; i++) {
 		rec->historyImageEntries[i].inx = INDEX_NOT_IN_USE;
 	}
@@ -4054,6 +3995,8 @@ static Status_t PmLoadHistory(Pm_t *pm, boolean master) {
 					}
 					// Move header into the record entry
 					memcpy(pm->ShortTermHistory.historyRecords[i], bf_header, readSize);
+
+					markImagesAsDisk(&(pm->ShortTermHistory.historyRecords[i]->header));
 
 					// if this was a failover the record may have the wrong filepath, so overwrite it
 					snprintf(pm->ShortTermHistory.historyRecords[i]->header.filename, PM_HISTORY_FILENAME_LEN, "%s", filename);
@@ -4314,7 +4257,7 @@ FSTATUS storeCompositeToBuffer(PmCompositeImage_t *cimg, uint8_t *buffer, uint32
 		return ret;
 	}
 
-	BSWAP_PM_COMPOSITE_IMAGE_FLAT((PmCompositeImage_t *)data, 1, cimg->header.common.historyVersion);
+	BSWAP_PM_COMPOSITE_IMAGE_FLAT((PmCompositeImage_t *)data, 1 /*, cimg->header.common.historyVersion*/);
 
 	if (cimg->header.common.isCompressed) {
 #ifdef __VXWORKS__
@@ -4432,44 +4375,30 @@ boolean PmCompareSWPort(PmPort_t *pmportp, char *groupName)
 
 static boolean PmCompareUserPGPort(PmPort_t *pmportp, char *groupName)
 {
-	char *dgName;
-	int i, j;
-	int pgIndex;
-	boolean res = 0;
-	Pm_t *pmp = &g_pmSweepData;
-	PMXmlConfig_t *pmxmlp = &pm_config;
-	PmPortImage_t *portImage = &pmportp->Image[pmp->SweepIndex];
+	int i;
+	int pgIdx = getUserPGIndex(groupName);
 
-	for (i = 0; i < MAX_DEVGROUPS; i++) {
-		if (portImage->dgMember[i] == DEFAULT_DEVGROUP_ID)
-			break;
-		dgName = getDGName(portImage->dgMember[i]);
-		pgIndex = getUserPGIndex(groupName);
-		if ((pgIndex < 0) || (pgIndex >= STL_PM_MAX_GROUPS))
-			break;
-		for (j = 0; j < STL_PM_MAX_DG_PER_PMPG; j++) {
-			if (strcmp(pmxmlp->pm_portgroups[pgIndex].Monitors[j].monitor, dgName) == 0) {
-				res = 1;
-				break;
-			}
+	if (pgIdx < 0 || pgIdx >= STL_PM_MAX_CUSTOM_PORT_GROUPS) return FALSE;
+
+	for (i = 0; i < STL_PM_MAX_DG_PER_PMPG; i++) {
+		if (bitset_test(&pmportp->dgMember, pm_config.pm_portgroups[pgIdx].Monitors[i].dg_Index)) {
+			return TRUE;
 		}
 	}
-
-	return(res);
+	return FALSE;
 }
 
-static FSTATUS PmCreateGroup(Pm_t *pm, const char* name, PmComparePortFunc_t ComparePortFunc)
+static FSTATUS PmCreateGroup(PmImage_t *pmimagep, const char* name, PmComparePortFunc_t ComparePortFunc)
 {
 	PmGroup_t *groupp;
 
-	if (pm->NumGroups >= PM_MAX_GROUPS)
+	if (pmimagep->NumGroups >= PM_MAX_GROUPS)
 		return FUNAVAILABLE;
 
-	groupp = pm->Groups[pm->NumGroups];
-	strncpy(groupp->Name, name, STL_PM_GROUPNAMELEN-1);
-	groupp->Name[STL_PM_GROUPNAMELEN-1] = 0;
+	groupp = &pmimagep->Groups[pmimagep->NumGroups];
+	StringCopy(groupp->Name, name, STL_PM_GROUPNAMELEN);
 	groupp->ComparePortFunc = ComparePortFunc;
-	pm->NumGroups++;
+	pmimagep->NumGroups++;
 	return FSUCCESS;
 }
 
@@ -4497,26 +4426,50 @@ static FSTATUS PmCreateGroup(Pm_t *pm, const char* name, PmComparePortFunc_t Com
 // The goal is to limit clear operations, especially for stable clean
 // fabrics.  If it is desired to clear error counters every time they
 // are non-zero simply fill in 0 for all clearThreshold values.
-static Status_t PmInit(Pm_t *pm, EUI64 portguid, uint16 pmflags,
-				uint16 interval, const ErrorSummary_t *thresholds,
-			   	const IntegrityWeights_t *integrityWeights,
-			   	const CongestionWeights_t *congestionWeights,
-				uint8 errorClear)
+static Status_t PmInit(Pm_t *pm)
 {
 	Status_t status = VSTATUS_OK;
 	uint32 i;
 	uint32 size;
-	PMXmlConfig_t *pmp = &pm_config;
 
 	IB_LOG_INFO0("PmInit");
 	PM_InitStaticRateToMBps();
 
 	MemoryClear(pm, sizeof(*pm));
-	pm->flags = pmflags;
-	pm->interval = interval;
-	pm->Thresholds = *thresholds;
-	pm->integrityWeights = *integrityWeights;
-	pm->congestionWeights = *congestionWeights;
+
+	pm->pmFlags = (pm_config.process_hfi_counters ? STL_PM_PROCESS_HFI_COUNTERS : 0)
+		| (pm_config.process_vl_counters ? STL_PM_PROCESS_VL_COUNTERS : 0)
+		| (pm_config.ClearDataXfer ? STL_PM_PROCESS_CLR_DATA_COUNTERS : 0)
+		| (pm_config.Clear64bit ? STL_PM_PROCESS_CLR_64BIT_COUNTERS : 0)
+		| (pm_config.Clear32bit ? STL_PM_PROCESS_CLR_32BIT_COUNTERS : 0)
+		| (pm_config.Clear8bit ? STL_PM_PROCESS_CLR_8BIT_COUNTERS : 0);
+
+	pm->interval   = pm_config.sweep_interval;
+	pm->ErrorClear = pm_config.ErrorClear;
+
+	pm->Thresholds.Integrity     = pm_config.thresholds.Integrity;
+	pm->Thresholds.Congestion    = pm_config.thresholds.Congestion;
+	pm->Thresholds.SmaCongestion = pm_config.thresholds.SmaCongestion;
+	pm->Thresholds.Bubble        = pm_config.thresholds.Bubble;
+	pm->Thresholds.Security      = pm_config.thresholds.Security;
+	pm->Thresholds.Routing       = pm_config.thresholds.Routing;
+
+	pm->integrityWeights.LocalLinkIntegrityErrors = pm_config.integrityWeights.LocalLinkIntegrityErrors;
+	pm->integrityWeights.PortRcvErrors            = pm_config.integrityWeights.PortRcvErrors;
+	pm->integrityWeights.ExcessiveBufferOverruns  = pm_config.integrityWeights.ExcessiveBufferOverruns;
+	pm->integrityWeights.LinkErrorRecovery        = pm_config.integrityWeights.LinkErrorRecovery;
+	pm->integrityWeights.LinkDowned               = pm_config.integrityWeights.LinkDowned;
+	pm->integrityWeights.UncorrectableErrors      = pm_config.integrityWeights.UncorrectableErrors;
+	pm->integrityWeights.FMConfigErrors           = pm_config.integrityWeights.FMConfigErrors;
+	pm->integrityWeights.LinkQualityIndicator     = pm_config.integrityWeights.LinkQualityIndicator;
+	pm->integrityWeights.LinkWidthDowngrade       = pm_config.integrityWeights.LinkWidthDowngrade;
+
+	pm->congestionWeights.PortXmitWait     = pm_config.congestionWeights.PortXmitWait;
+	pm->congestionWeights.SwPortCongestion = pm_config.congestionWeights.SwPortCongestion;
+	pm->congestionWeights.PortRcvFECN      = pm_config.congestionWeights.PortRcvFECN;
+	pm->congestionWeights.PortRcvBECN      = pm_config.congestionWeights.PortRcvBECN;
+	pm->congestionWeights.PortXmitTimeCong = pm_config.congestionWeights.PortXmitTimeCong;
+	pm->congestionWeights.PortMarkFECN     = pm_config.congestionWeights.PortMarkFECN;
 
 	IB_LOG_INFO_FMT(__func__, "SweepInterval=%u", pm->interval);
 	IB_LOG_INFO_FMT(__func__, "Thresholds.Integrity=%u", pm->Thresholds.Integrity);
@@ -4550,41 +4503,11 @@ static Status_t PmInit(Pm_t *pm, EUI64 portguid, uint16 pmflags,
 	IB_LOG_INFO_FMT(__func__, "CongestionWeights.XmitTimeCong=%u", pm->congestionWeights.PortXmitTimeCong);
 	IB_LOG_INFO_FMT(__func__, "CongestionWeights.MarkFECN=%u", pm->congestionWeights.PortMarkFECN);
 
-	IB_LOG_INFO_FMT(__func__, "ErrorClear=%u", errorClear);
+	IB_LOG_INFO_FMT(__func__, "ErrorClear=%u", pm->ErrorClear);
 
 
 	pm->PmPortSize = sizeof(PmPort_t)+sizeof(PmPortImage_t)*(pm_config.total_images-1);
 	pm->PmNodeSize = sizeof(PmNode_t)+sizeof(PmNodeImage_t)*(pm_config.total_images-1);
-
-	size = sizeof(PmGroup_t)+sizeof(PmGroupImage_t)*(pm_config.total_images-1);
-	status = vs_pool_alloc(&pm_pool, size, (void*)&pm->AllPorts);
-	if (status != VSTATUS_OK || ! pm->AllPorts) {
-		IB_LOG_ERRORRC("Failed to allocate PM AllPorts group rc:", status);
-		status = VSTATUS_NOMEM;
-		goto fail;
-	}
-	MemoryClear(pm->AllPorts, size);
-
-	for (i=0; i < PM_MAX_GROUPS; ++i) {
-		status = vs_pool_alloc(&pm_pool, size, (void*)&pm->Groups[i]);
-		if (status != VSTATUS_OK || ! pm->Groups[i]) {
-			IB_LOG_ERRORRC("Failed to allocate PM Groups rc:", status);
-			status = VSTATUS_NOMEM;
-			goto fail;
-		}
-		MemoryClear(pm->Groups[i], size);
-	}
-
-	size = sizeof(PmVF_t)+sizeof(PmVFImage_t)*(pm_config.total_images-1);
-	for (i=0; i < MAX_VFABRICS; ++i) {
-		status = vs_pool_alloc(&pm_pool, size, (void*)&pm->VFs[i]);
-		if (status != VSTATUS_OK || ! pm->VFs[i]) {
-			IB_LOG_ERRORRC("Failed to allocate PM VFs rc:", status);
-			status = VSTATUS_NOMEM;
-			goto fail;
-		}
-		MemoryClear(pm->VFs[i], size);
-	}
 
 	size = sizeof(PmImage_t)*pm_config.total_images;
 	status = vs_pool_alloc(&pm_pool, size, (void*)&pm->Image);
@@ -4622,22 +4545,20 @@ static Status_t PmInit(Pm_t *pm, EUI64 portguid, uint16 pmflags,
 	LinkDownIgnoreMask.s.LocalLinkIntegrityErrors = 1;
 	LinkDownIgnoreMask.s.ExcessiveBufferOverruns = 1;
 
-	PM_BuildClearCounterSelect(&pm->clearCounterSelect, (pmflags & STL_PM_PROCESS_CLR_DATA_COUNTERS?1:0),
-							   (pmflags & STL_PM_PROCESS_CLR_64BIT_COUNTERS?1:0),
-							   (pmflags & STL_PM_PROCESS_CLR_32BIT_COUNTERS?1:0),
-							   (pmflags & STL_PM_PROCESS_CLR_8BIT_COUNTERS?1:0) );
+	PM_BuildClearCounterSelect(&pm->clearCounterSelect,
+		pm_config.ClearDataXfer, pm_config.Clear64bit,
+		pm_config.Clear32bit, pm_config.Clear8bit);
 
-	pm->ErrorClear = errorClear;
-	PmComputeClearThresholds(&pm->ClearThresholds, &pm->clearCounterSelect, errorClear);
+	PmComputeClearThresholds(&pm->ClearThresholds, &pm->clearCounterSelect, pm->ErrorClear);
 	pm->LastSweepIndex = PM_IMAGE_INDEX_INVALID;
 	pm->lastHistoryIndex = pm_config.total_images-1;
 	//pm->SweepIndex = 0;	// next sweep index to use - zeroed by MemoryClear
 	status = vs_lock_init(&pm->stateLock, VLOCK_FREE, VLOCK_RWTHREAD);
 	if (status != VSTATUS_OK)
-		IB_FATAL_ERROR("Can't initialize PM sweep lock");
+		IB_FATAL_ERROR_NODUMP("Can't initialize PM sweep lock");
 	status = vs_lock_init(&pm->totalsLock, VLOCK_FREE, VLOCK_RWTHREAD);
 	if (status != VSTATUS_OK)
-		IB_FATAL_ERROR("Can't initialize PM totals lock");
+		IB_FATAL_ERROR_NODUMP("Can't initialize PM totals lock");
 
 
 	cl_qmap_init(&pm->AllNodes, NULL);
@@ -4652,27 +4573,9 @@ static Status_t PmInit(Pm_t *pm, EUI64 portguid, uint16 pmflags,
 		PmImage_t *pmimagep = &pm->Image[i];
 		status = vs_lock_init(&pmimagep->imageLock, VLOCK_FREE, VLOCK_RWTHREAD);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Can't initialize PM Fabric lock");
+			IB_FATAL_ERROR_NODUMP("Can't initialize PM Fabric lock");
 		pmimagep->state = PM_IMAGE_INVALID;
 	}
-
-	cs_strlcpy(pm->AllPorts->Name, "All", STL_PM_GROUPNAMELEN);
-	PmCreateGroup(pm, "HFIs", PmCompareHFIPort);
-	//PmCreateGroup(pm, "TFIs", PmCompareTCAPort); //Temporary removal as TFIs do not exist in Gen1
-	PmCreateGroup(pm, "SWs", PmCompareSWPort);
-	for (i = 0; i < pmp->number_of_pm_groups; i++) {
-		PmCreateGroup(pm, pmp->pm_portgroups[i].Name, PmCompareUserPGPort);
-	}
-	// Create VFs
-	(void)vs_rdlock(&old_topology_lock);
-	VirtualFabrics_t *VirtualFabrics = old_topology.vfs_ptr;
-	for (i = 0; i < VirtualFabrics->number_of_vfs_all; i++) {
-		PmVF_t *vfp = pm->VFs[pm->numVFs];
-		strncpy(vfp->Name, VirtualFabrics->v_fabric_all[i].name, STL_PM_VFNAMELEN-1);
-		vfp->Name[STL_PM_VFNAMELEN-1] = 0;
-		pm->numVFs++;
-	}
-	(void)vs_rwunlock(&old_topology_lock);
 
 #if CPU_LE
 	// Process STH files only on LE CPUs
@@ -4688,33 +4591,8 @@ static Status_t PmInit(Pm_t *pm, EUI64 portguid, uint16 pmflags,
 #endif
 #endif	// End of #if CPU_LE
 
-#if DEBUG && 0
-	IB_LOG_VERBOSE("Max MBps 1x SDR=", IbStaticRateToMBps(IB_STATIC_RATE_2_5G));
-	IB_LOG_VERBOSE("Max MBps 4x SDR=", IbStaticRateToMBps(IB_STATIC_RATE_10G));
-	IB_LOG_VERBOSE("Max MBps 4x DDR=", IbStaticRateToMBps(IB_STATIC_RATE_20G));
-	IB_LOG_VERBOSE("Max MBps 4x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_40G));
-	IB_LOG_VERBOSE("Max MBps 8x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_80G));
-	IB_LOG_VERBOSE("Max MBps 12x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_120G));
-	IB_LOG_VERBOSE("Max MBps 1x FDR=", IbStaticRateToMBps(IB_STATIC_RATE_14G));
-	IB_LOG_VERBOSE("Max MBps 1x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_25G));
-	IB_LOG_VERBOSE("Max MBps 4x FDR=", IbStaticRateToMBps(IB_STATIC_RATE_56G));
-	IB_LOG_VERBOSE("Max MBps 4x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_100G));
-	IB_LOG_VERBOSE("Max MBps 12x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_300G));
-	IB_LOG_VERBOSE("Max KPps 1x SDR=", IbStaticRateToMBps(IB_STATIC_RATE_2_5G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 4x SDR=", IbStaticRateToMBps(IB_STATIC_RATE_10G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 4x DDR=", IbStaticRateToMBps(IB_STATIC_RATE_20G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 4x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_40G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 8x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_80G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 12x QDR=", IbStaticRateToMBps(IB_STATIC_RATE_120G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 1x FDR=", IbStaticRateToMBps(IB_STATIC_RATE_14G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 1x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_25G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 4x FDR=", IbStaticRateToMBps(IB_STATIC_RATE_56G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 4x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_100G)*(1024)/28);
-	IB_LOG_VERBOSE("Max KPps 12x EDR=", IbStaticRateToMBps(IB_STATIC_RATE_300G)*(1024)/28);
-#endif
-
 	if (VSTATUS_OK != (status = PmDispatcherInit(pm)))
-		IB_FATAL_ERROR("Can't initialize PM Dispatcher");
+		IB_FATAL_ERROR_NODUMP("Can't initialize PM Dispatcher");
 	return status;
 
 fail:
@@ -4730,30 +4608,13 @@ fail:
 		vs_pool_free(&pm_pool, pm->Image);
 		pm->Image = NULL;
 	}
-	for (i=0; i < MAX_VFABRICS; ++i) {
-		if (pm->VFs[i]) {
-			vs_pool_free(&pm_pool, pm->VFs[i]);
-			pm->VFs[i] = NULL;
-		}
-	}
-	for (i=0; i < PM_MAX_GROUPS; ++i) {
-		if (pm->Groups[i]) {
-			vs_pool_free(&pm_pool, pm->Groups[i]);
-			pm->Groups[i] = NULL;
-		}
-	}
-	if (pm->AllPorts) {
-		vs_pool_free(&pm_pool, pm->AllPorts);
-		pm->AllPorts = NULL;
-	}
 
 	return status;
 }
 
 void PmDestroy(Pm_t *pm)
 {
-	uint16 lid;
-	uint32 i;
+	STL_LID lid;
 
 	IB_LOG_INFO0(__func__);
 
@@ -4801,23 +4662,8 @@ void PmDestroy(Pm_t *pm)
 		vs_pool_free(&pm_pool, pm->Image);
 		pm->Image = NULL;
 	}
-	for (i=0; i < MAX_VFABRICS; ++i) {
-		if (pm->VFs[i]) {
-			vs_pool_free(&pm_pool, pm->VFs[i]);
-			pm->VFs[i] = NULL;
-		}
-	}
-	for (i=0; i < PM_MAX_GROUPS; ++i) {
-		if (pm->Groups[i]) {
-			vs_pool_free(&pm_pool, pm->Groups[i]);
-			pm->Groups[i] = NULL;
-		}
-	}
-	if (pm->AllPorts) {
-		vs_pool_free(&pm_pool, pm->AllPorts);
-		pm->AllPorts = NULL;
-	}
 #ifndef __VXWORKS__
+	uint32 i;
 	if (pm->ShortTermHistory.currentComposite) {
 		PmFreeComposite(pm->ShortTermHistory.currentComposite);
 		pm->ShortTermHistory.currentComposite = NULL;
@@ -4858,7 +4704,7 @@ void PmDestroy(Pm_t *pm)
 // held read for previous image
 static void PmFinalizeAllPortStats(Pm_t *pm)
 {
-	uint16 lid;
+	STL_LID lid;
 	PmPort_t *pmportp;
 	PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
 	PmThresholdsExceededMsgLimitXmlConfig_t thresholdsExceededMsgCount = {0};
@@ -4874,8 +4720,7 @@ static void PmFinalizeAllPortStats(Pm_t *pm)
 			uint8 i;
 			for (i = 0; i <= pmnodep->numPorts; ++i) {
 				pmportp = pmnodep->up.swPorts[i];
-				if (pmportp && !pmportp->u.s.PmaAvoid
-					&& pmportp->Image[pm->SweepIndex].u.s.active)
+				if (pmportp && !pmportp->u.s.PmaAvoid)
 					PmFinalizePortStats(pm, pmportp, pm->SweepIndex);
 			}
 		} else {
@@ -4939,7 +4784,7 @@ static void PmFinalizeAllPortStats(Pm_t *pm)
 // this sends no packets on the wire
 void PmClearAllNodes(Pm_t *pm)
 {
-	uint16 lid;
+	STL_LID lid;
 	PmImage_t *pmimagep = &pm->Image[pm->SweepIndex];
 
 	for (lid = 1; lid <= pmimagep->maxLid; ++lid) {
@@ -4973,12 +4818,12 @@ static void PmPrintFailNode(Pm_t *pm, PmNode_t *pmnodep, uint8 method, uint16 ai
 		IB_LOG_WARN_FMT(__func__, "Unable to %s(%s) %.*s Guid "FMT_U64" LID 0x%x",
 			StlPmMadMethodToText(method), StlPmMadAttributeToText(aid),
 			(int)sizeof(pmnodep->nodeDesc.NodeString), pmnodep->nodeDesc.NodeString,
-			pmnodep->guid, pmnodep->Image[pm->SweepIndex].lid);
+			pmnodep->NodeGUID, pmnodep->Image[pm->SweepIndex].lid);
 	} else {
 		IB_LOG_INFO_FMT(__func__, "Unable to %s(%s) %.*s Guid "FMT_U64" LID 0x%x",
 			StlPmMadMethodToText(method), StlPmMadAttributeToText(aid),
 			(int)sizeof(pmnodep->nodeDesc.NodeString), pmnodep->nodeDesc.NodeString,
-			pmnodep->guid, pmnodep->Image[pm->SweepIndex].lid);
+			pmnodep->NodeGUID, pmnodep->Image[pm->SweepIndex].lid);
 	}
 }
 
@@ -4993,12 +4838,12 @@ static void PmPrintFailPort(Pm_t *pm, PmPort_t *pmportp, uint8 method, uint16 ai
 		IB_LOG_WARN_FMT(__func__, "Unable to %s(%s) %.*s Guid "FMT_U64" LID 0x%x Port %u",
 			StlPmMadMethodToText(method), StlPmMadAttributeToText(aid),
 			(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-			pmportp->pmnodep->guid, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
+			pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
 	} else {
 		IB_LOG_INFO_FMT(__func__, "Unable to %s(%s) %.*s Guid "FMT_U64" LID 0x%x Port %u",
 			StlPmMadMethodToText(method), StlPmMadAttributeToText(aid),
 			(int)sizeof(pmportp->pmnodep->nodeDesc.NodeString), pmportp->pmnodep->nodeDesc.NodeString,
-			pmportp->pmnodep->guid, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
+			pmportp->pmnodep->NodeGUID, pmportp->pmnodep->Image[pm->SweepIndex].lid, pmportp->portNum);
 	}
 }
 
@@ -5042,7 +4887,7 @@ void PmFailPort(Pm_t *pm, PmPort_t *pmportp, uint8 queryStatus, uint8 method, ui
 }	// End of PmFailPort()
 
 void PmFailPacket(Pm_t *pm, PmDispatcherPacket_t *disppacket, uint8 queryStatus, uint8 method, uint16 aid)
-{	
+{
 	int i, j;
 	uint64 PortSelectMask;
 	PmPort_t *pmportp;
@@ -5118,7 +4963,11 @@ void PmFailNode(Pm_t *pm, PmNode_t *pmnodep, uint8 queryStatus, uint8 method, ui
 static FSTATUS PmSweepCounters(Pm_t *pm)
 {
 	FSTATUS status;
+	uint64_t stime, etime;
 
+	if (g_pmDebugPerf) {
+		(void)vs_time_get(&stime);
+	}
 	status = PmSweepAllPortCounters(pm);
 	if (status != FSUCCESS)
 		return status;
@@ -5126,8 +4975,16 @@ static FSTATUS PmSweepCounters(Pm_t *pm)
 		IB_LOG_INFO0("PM Engine shut down requested");
 		return FNOT_DONE;
 	}
-
+	if (g_pmDebugPerf) {
+		(void)vs_time_get(&etime);
+		IB_LOG_INFINI_INFO_FMT("PmSweepAllPortCounters", "%"PRIu64, (etime-stime));
+		(void)vs_time_get(&stime);
+	}
 	PmFinalizeAllPortStats(pm);
+	if (g_pmDebugPerf) {
+		(void)vs_time_get(&etime);
+		IB_LOG_INFINI_INFO_FMT("PmFinalizeAllPortStats","%"PRIu64, (etime-stime));
+	}
 	return FSUCCESS;
 }
 
@@ -5136,12 +4993,14 @@ static FSTATUS PmSweepCounters(Pm_t *pm)
 // returns TRUE if have topology and swept, FALSE otherwise
 static FSTATUS PmSweep(Pm_t *pm)
 {
-    FSTATUS ret = FSUCCESS;
+	FSTATUS ret = FSUCCESS;
 	PmImage_t *pmimagep;
 	uint64_t sweepStart;
-	uint64_t now;
+	uint64_t now, sTime, eTime;
 	time_t now_time;
+	int i;
 
+	PmDispatcherPerfInit(&pm->Dispatcher.perf_stats);
 	(void)vs_wrlock(&pm->stateLock);
 	pmimagep = &pm->Image[pm->SweepIndex];
 	pmimagep->sweepNum = pm->NumSweeps;
@@ -5151,6 +5010,15 @@ static FSTATUS PmSweep(Pm_t *pm)
 	(void)vs_rwunlock(&pm->stateLock);
 	vs_stdtime_get(&pmimagep->sweepStart);
 	vs_time_get(&sweepStart);
+	sTime = sweepStart;
+
+	// Add PmPortGroups to Image
+	pmimagep->NumGroups = 0;
+	PmCreateGroup(pmimagep, "HFIs", PmCompareHFIPort);
+	PmCreateGroup(pmimagep, "SWs", PmCompareSWPort);
+	for (i = 0; i < pm_config.number_of_pm_groups; i++) {
+		PmCreateGroup(pmimagep, pm_config.pm_portgroups[i].Name, PmCompareUserPGPort);
+	}
 
 	// now since we marked the image state, we could technically unlock
 	// imageLock, but no harm in holding it, easier to maintain and review code
@@ -5163,7 +5031,10 @@ static FSTATUS PmSweep(Pm_t *pm)
 		ret = FNOT_DONE;;
 		goto unlock_image;
 	}
-
+	if (g_pmDebugPerf) {
+		(void)vs_time_get(&eTime);
+		IB_LOG_INFINI_INFO_FMT("pm_copy_topology","%"PRIu64, (eTime - sTime));
+	}
 #if ENABLE_PMA_SWEEP
 	if (ret != FSUCCESS) {	/* standby */
 		g_pmFirstSweepAsMaster = TRUE;
@@ -5174,6 +5045,9 @@ static FSTATUS PmSweep(Pm_t *pm)
 	// Process STH files only on LE CPUs
 #ifndef __VXWORKS__
 	if (pm_config.shortTermHistory.enable && g_pmFirstSweepAsMaster) {
+		if (g_pmDebugPerf) {
+			(void)vs_time_get(&sTime);
+		}
 		if (pm->ShortTermHistory.currentComposite) {
 			//became master; free the old image now that it is no longer being used
 			PmFreeComposite(pm->ShortTermHistory.currentComposite);
@@ -5201,6 +5075,10 @@ static FSTATUS PmSweep(Pm_t *pm)
 				vs_pool_free(&pm_pool, pm->ShortTermHistory.historyRecords);
 			}
 		}
+		if (g_pmDebugPerf) {
+			(void)vs_time_get(&eTime);
+			IB_LOG_INFINI_INFO_FMT("PmLoadHistory","%"PRIu64, (eTime - sTime));
+		}
 	}
 #endif
 #endif	// End of #if CPU_LE
@@ -5221,7 +5099,7 @@ static FSTATUS PmSweep(Pm_t *pm)
 	vs_time_get(&now);
 	vs_stdtime_get(&now_time);
 	pmimagep->sweepDuration = (uint32)(now - sweepStart);
-	IB_LOG_INFO_FMT(__func__, "Sweep Done: %d packets, %d retries, duration %d.%.3d ms",
+	cs_log((g_pmDebugPerf ? VS_LOG_INFINI_INFO : VS_LOG_INFO), __func__, "Sweep Done: %d packets, %d retries, duration %d.%.3d ms",
 					(int)AtomicRead(&pmCounters[pmCounterPmPacketTransmits].sinceLastSweep),
 					(int)AtomicRead(&pmCounters[pmCounterPacketRetransmits].sinceLastSweep),
 				   	pmimagep->sweepDuration/1000, pmimagep->sweepDuration%1000);
@@ -5232,6 +5110,11 @@ static FSTATUS PmSweep(Pm_t *pm)
 					(int)AtomicRead(&pmCounters[pmCounterPacketRetransmits].sinceLastSweep),
 				   	pmimagep->sweepDuration/1000000, (pmimagep->sweepDuration/1000)%1000,
 					pm->interval);
+		// Sweep exceeded expected interval, set it to this image's interval
+		pmimagep->imageInterval = pmimagep->sweepDuration/VTIMER_1S;
+	} else {
+		// Sweep was within the expected interval
+		pmimagep->imageInterval = pm->interval;
 	}
 	(void)vs_rwunlock(&pmimagep->imageLock);
 
@@ -5272,7 +5155,7 @@ static FSTATUS PmSweep(Pm_t *pm)
 		if (now_time > pm->Image[pm->SweepIndex].lastUsed
 			&& now_time - pm->Image[pm->SweepIndex].lastUsed > pm_config.freeze_frame_lease) {
 			pm->Image[pm->SweepIndex].ffRefCount = 0;
-			// paAccess will clean up FreezeFrame on next access or FF Create
+			// pa_access will clean up FreezeFrame on next access or FF Create
 		}
 		// skip past images which are frozen
 	} while (pm->Image[pm->SweepIndex].ffRefCount);
@@ -5301,6 +5184,7 @@ PmEngineMain(uint32_t args, uint8_t **argv)
 {
 	uint64_t next, now;
 	Eventset_t events;
+	Status_t rc;
 
 	g_pmEngineThreadRunning = TRUE;
 	vs_log_output_message("PM: Engine starting up, will be monitoring and clearing port counters", FALSE);
@@ -5314,14 +5198,10 @@ PmEngineMain(uint32_t args, uint8_t **argv)
 		next = now + VTIMER_1S*g_pmSweepData.interval;
 		if (FSUCCESS != PmSweep(&g_pmSweepData) )
 			next =  now + VTIMER_1S;	// wait only 1 second if we can't sweep
-		// loop, so we will discover shutdown within a second
-		while (! pm_shutdown && g_pmEngineState == PM_ENGINE_STARTED
-				&& now < next) {
-			// wait for 1 second or until told to shutdown
-			Status_t rc;
-			rc=vs_event_wait(&g_pmEngineShutdownEvent, VTIMER_1S, (Eventset_t)1, &events);
-			IB_LOG_DEBUG1RC("Waited for event or 1 second rc:", rc);
-			(void)vs_time_get(&now);
+		(void)vs_time_get(&now);
+		if (next > now) {
+			rc=vs_event_wait(&g_pmEngineShutdownEvent, (next - now), (Eventset_t)1, &events);
+			IB_LOG_DEBUG1_FMT(__func__, "Waited for event for %"PRIu64" sec and %"PRIu64" ms, rc: %s", (next-now)/(uint64_t)VTIMER_1S, ((next-now)%(uint64_t)VTIMER_1S)/(uint64_t)1000, cs_convert_status(rc));
 		}
 	}
 	IB_LOG_INFO0("PM Engine thread done");
@@ -5335,45 +5215,36 @@ void PmEngineStart(void)
 	Status_t status;
 
 	if (ENABLE_ENGINE) {
-		status = PmInit(&g_pmSweepData, pm_config.port_guid,
-						(pm_config.process_hfi_counters ? STL_PM_PROCESS_HFI_COUNTERS : 0)
-						| (pm_config.process_vl_counters ? STL_PM_PROCESS_VL_COUNTERS : 0)
-						| (pm_config.ClearDataXfer ? STL_PM_PROCESS_CLR_DATA_COUNTERS : 0)
-						| (pm_config.Clear64bit ? STL_PM_PROCESS_CLR_64BIT_COUNTERS : 0)
-						| (pm_config.Clear32bit ? STL_PM_PROCESS_CLR_32BIT_COUNTERS : 0)
-						| (pm_config.Clear8bit ? STL_PM_PROCESS_CLR_8BIT_COUNTERS : 0),
-						pm_config.sweep_interval,
-						&g_pmThresholds, &g_pmIntegrityWeights, &g_pmCongestionWeights,
-						pm_config.ErrorClear);
+		status = PmInit(&g_pmSweepData);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Unable to initialize Pm Sweep Engine");
+			IB_FATAL_ERROR_NODUMP("Unable to initialize Pm Sweep Engine");
 
 		status = cs_sema_create(&g_pmAsyncRcvSema, 0);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Unable to create sema for Pm Async Rcv Thread");
+			IB_FATAL_ERROR_NODUMP("Unable to create sema for Pm Async Rcv Thread");
 		pm_async_send_rcv_cntxt = &g_pmSweepData.Dispatcher.cntx;
 		status = vs_thread_create(&g_pmAsyncRcvThread, (void*)"PmAsyncRcv",
 			   		pm_async_rcv, 0, NULL, PM_ASYNC_RCV_STACK_SIZE);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Unable to start Pm Async Rcv Thread");
+			IB_FATAL_ERROR_NODUMP("Unable to start Pm Async Rcv Thread");
 		while ((status = cs_psema(&g_pmAsyncRcvSema)) != VSTATUS_OK)
 			IB_LOG_ERRORRC("timeout waiting for Async Rcv Thread to start rc:", status);
 		status = vs_event_create(&g_pmEngineShutdownEvent,
 					(unsigned char*)"PM Engine Stop", (Eventset_t)0);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Unable to create event for Pm Sweep Engine");
+			IB_FATAL_ERROR_NODUMP("Unable to create event for Pm Sweep Engine");
 
 		g_pmEngineState = PM_ENGINE_STARTED;
 		status = vs_thread_create(&g_pmEngineThread, (void*)"PmEngine",
 				   		PmEngineMain, 0, NULL, PM_ENGINE_STACK_SIZE);
 		if (status != VSTATUS_OK) {
 			g_pmEngineState = PM_ENGINE_STOPPED;
-			IB_FATAL_ERROR("Unable to start Pm Sweep Engine");
+			IB_FATAL_ERROR_NODUMP("Unable to start Pm Sweep Engine");
 		}
 		status = vs_thread_create(&g_PmDbsyncThread, (void*)"PmDbsyncThread",
 								  PmDbsyncThread, 0, NULL, PM_DBSYNC_THREAD_STACK_SIZE);
 		if (status != VSTATUS_OK)
-			IB_FATAL_ERROR("Unable to start Pm Dbsync Thread");
+			IB_FATAL_ERROR_NODUMP("Unable to start Pm Dbsync Thread");
 	} else {
 		vs_log_output_message("PM: Engine disabled, configure Pm.SweepInterval to enable PM Engine", FALSE);
 	}

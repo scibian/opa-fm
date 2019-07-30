@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2018, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -39,6 +39,7 @@ DIRS			= \
 				$(shell ls -d FastFabric 2>/dev/null) \
 				$(shell ls -d fabric_info 2>/dev/null) \
 				$(shell ls -d setup_self_ssh 2>/dev/null) \
+				$(shell ls -d stream 2>/dev/null) \
 				$(shell ls -d opaipcalc 2>/dev/null) \
 				$(shell ls -d opagetipaddrtype 2>/dev/null) \
 				$(shell ls -d opafirmware 2>/dev/null)  \
@@ -67,6 +68,7 @@ DIRS			= \
 				$(shell ls -d usemem 2>/dev/null) \
 				$(shell ls -d opapacketcapture 2>/dev/null) \
 				$(shell ls -d man 2>/dev/null) \
+                $(shell ls -d opasnapconfig 2>/dev/null) \
 				$(shell ls -d opatmmtool 2>/dev/null)
 ifeq "$(IB_STACK)" "OPENIB"
 DIRS			+= \
@@ -74,8 +76,7 @@ DIRS			+= \
 				$(shell ls -d opasw 2>/dev/null) \
 				$(shell ls -d opapaquery 2>/dev/null) \
 				$(shell ls -d oparesolvehfiport 2>/dev/null) \
-				$(shell ls -d opagenchassis 2>/dev/null) \
-				$(shell ls -d opafequery 2>/dev/null)
+				$(shell ls -d opagenchassis 2>/dev/null)
 endif # OPENIB
 
 include $(TL_DIR)/IbaTools/Makerules.module

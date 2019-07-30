@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -342,7 +342,8 @@ count++;
 }
 }
 #endif
-	if (entry->mad.base.mclass == MAD_CV_PERF || entry->mad.base.mclass == MAD_CV_SUBN_ADM) {
+	if (entry->mad.base.mclass == MAD_CV_PERF || entry->mad.base.mclass == MAD_CV_SUBN_ADM
+			) {
 		datalen = MIN((uint32_t)entry->mad.datasize, STL_GS_DATASIZE);
 		if ((status = mai_send_stl_timeout(cntx->ibHandle, &entry->mad, &datalen, entry->RespTimeout)) != VSTATUS_OK) {
 			IB_LOG_ERROR_FMT(__func__,
@@ -419,7 +420,7 @@ Status_t cs_cntxt_instance_init (Pool_t *pool, generic_cntxt_t *cntx, uint64_t t
     }
     // create the free context wait semaphore
     if ((status = cs_sema_create(&cntx->freeContextWaitSema, 0)) != VSTATUS_OK) {
-        IB_FATAL_ERROR("cs_cntx_instance_init: can't initialize context semaphore");
+        IB_FATAL_ERROR_NODUMP("cs_cntx_instance_init: can't initialize context semaphore");
     }
 
     IB_EXIT(__func__, status );
@@ -523,7 +524,7 @@ Status_t cs_cntxt_timeout_entry(cntxt_entry_t *tout_cntxt, generic_cntxt_t *cntx
 			|| (tout_cntxt->mad.base.mclass == MAD_CV_SUBN_DR) ) {
 			if (smDebugPerf) {
 				// exhausted the retries, release the context
-				IB_LOG_INFINI_INFO_FMT(__func__, "no response to %s of %s from lid %d, TID 0x%.16"CS64"X",
+				IB_LOG_INFINI_INFO_FMT(__func__, "no response to %s of %s from lid 0x%x, TID 0x%.16"CS64"X",
 					cs_getMethodText(tout_cntxt->mad.base.method), cs_getAidName(tout_cntxt->mad.base.mclass, tout_cntxt->mad.base.aid), 
 					tout_cntxt->lid, tout_cntxt->tid);
 			}

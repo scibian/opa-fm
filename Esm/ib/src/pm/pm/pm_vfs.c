@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -36,41 +36,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // these routines does not need imageIndex (a couple ASSERTs could benefit
 // from it).
 
-// adds a port to a vf.
-void PmAddPortToVFIndex(PmPortImage_t * portImage, uint32 vfIndex,
-			   					PmVF_t *vfp)
+static boolean PmIsPortImageInVF(PmPortImage_t *portImage, int vfIdx)
 {
-	portImage->vfvlmap[vfIndex].pVF = vfp;
-}
+	if (vfIdx != -1 && portImage->vfvlmap[vfIdx].vlmask != 0) return TRUE;
 
-// removes a port from a vf.
-void PmRemovePortFromVFIndex(PmPortImage_t *portImage, uint32 vfIndex,
-			   						PmVF_t *vfp)
-{
-	for (; vfIndex < MAX_VFABRICS-1; vfIndex++) {
-		portImage->vfvlmap[vfIndex] = portImage->vfvlmap[vfIndex+1];
-	}
-}
-
-static boolean PmIsPortImageInVF(PmPortImage_t *portImage, PmVF_t *vfp)
-{
-	int i;
-
-	for (i=0; i<MAX_VFABRICS; i++) {
-		if (portImage->vfvlmap[i].pVF == vfp)
-			return TRUE;
-	}
 	return FALSE;
 }
 
-boolean PmIsPortInVF(Pm_t *pm, PmPort_t *pmportp,
-						PmPortImage_t *portImage, PmVF_t *vfp)
+boolean PmIsPortInVF(PmImage_t *pmimagep, PmPortImage_t *portImage,
+	int vfIndex)
 {
-	// for non-Switch ports and switch port 0, active will be true
-	// but for other switch ports could be not active
-	// ports without a PMA are not tabulated
-	if (pmportp->u.s.PmaAvoid || ! portImage->u.s.active)
-		return FALSE;
-	return (PmIsPortImageInVF(portImage, vfp));
+	if (!portImage->u.s.active) return FALSE;
+	if (vfIndex == -1 || vfIndex > pmimagep->NumVFs) return FALSE;
+
+	return PmIsPortImageInVF(portImage, vfIndex);
 }
 

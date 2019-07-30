@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2018, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -231,7 +231,11 @@ static void
 _balance_ports(Node_t *switchp, SwitchportToNextGuid_t *ordered_ports, int olen)
 {
 	int i, j;
-
+#ifdef __VXWORKS__
+	GuidCounter_t *scratch = (GuidCounter_t *)(ordered_ports + olen);
+#else
+	GuidCounter_t scratch[MAX_STL_PORTS] = {{0}};
+#endif /* __VXWORKS__ */
 	if (olen <= 0) return;
 
 	if (switchp->internalLinks) {
@@ -242,7 +246,7 @@ _balance_ports(Node_t *switchp, SwitchportToNextGuid_t *ordered_ports, int olen)
 		qsort(ordered_ports, olen, sizeof(SwitchportToNextGuid_t),
 	      	_compare_guids_then_lids_routed);
 
-		_guid_cycle_sort(ordered_ports, olen, (void*)(ordered_ports + olen), FALSE);
+		_guid_cycle_sort(ordered_ports, olen, (void*)(scratch), FALSE);
 		for (i = 0, j = 0; i < olen; i++) {
 			if (i == olen - 1 || ordered_ports[i].guid > ordered_ports[i+1].guid) {
 				qsort(&ordered_ports[j], i - j + 1, sizeof(SwitchportToNextGuid_t),
@@ -256,58 +260,58 @@ _balance_ports(Node_t *switchp, SwitchportToNextGuid_t *ordered_ports, int olen)
 static Status_t
 _handle_preassigned_sl(RoutingModule_t *rm, VirtualFabrics_t *vfs, bitset_t *usedSLs, int *numSCs)
 {
-	int vf;
+	int qos;
 	Status_t ret = VSTATUS_OK;
 
-	for (vf=0; vf < vfs->number_of_vfs_all; vf++) {
-		VF_t *vfp = &vfs->v_fabric_all[vf];
+	for (qos=0; qos < vfs->number_of_qos_all; qos++) {
+		QosConfig_t *pQos = &vfs->qos_all[qos];
 
-		if (!vfp->qos_enable) {
+		if (!pQos->qos_enable) {
 			// Ignore any SLs set on nonQos VFs
 			// Don't warn here. Config parser should have warned.
-			if (vfp->base_sl != UNDEFINED_XML8) {
-				vfp->base_sl = UNDEFINED_XML8;
+			if (pQos->base_sl != UNDEFINED_XML8) {
+				pQos->base_sl = UNDEFINED_XML8;
 			}
-			if (vfp->resp_sl != UNDEFINED_XML8) {
-				vfp->resp_sl = UNDEFINED_XML8;
+			if (pQos->resp_sl != UNDEFINED_XML8) {
+				pQos->resp_sl = UNDEFINED_XML8;
 			}
-			if (vfp->mcast_sl != UNDEFINED_XML8) {
-				vfp->mcast_sl = UNDEFINED_XML8;
+			if (pQos->mcast_sl != UNDEFINED_XML8) {
+				pQos->mcast_sl = UNDEFINED_XML8;
 			}
 			continue;
 		}
 
-		if (vfp->base_sl != UNDEFINED_XML8) {
-			if(!bitset_test(usedSLs, vfp->base_sl))
-				*numSCs += rm->funcs.num_routing_scs(vfp->base_sl, 0);
-			bitset_set(usedSLs, vfp->base_sl);
-			if (rm->funcs.mcast_isolation_required() && vfp->contains_mcast) {
-				if (vfp->mcast_sl == UNDEFINED_XML8) {
+		if (pQos->base_sl != UNDEFINED_XML8) {
+			if(!bitset_test(usedSLs, pQos->base_sl))
+				*numSCs += rm->funcs.num_routing_scs(pQos->base_sl, 0);
+			bitset_set(usedSLs, pQos->base_sl);
+			if (rm->funcs.mcast_isolation_required() && pQos->contains_mcast) {
+				if (pQos->mcast_sl == UNDEFINED_XML8) {
 					IB_LOG_ERROR_FMT(__func__,
-						"VFabric %s: Routing algorithm %s requires multicast isolation, but MulticastSL not configured",
-						vfp->name, rm->name);
+						"QOSGroup %s: Routing algorithm %s requires multicast isolation, but MulticastSL not configured",
+						pQos->name, rm->name);
 					ret = VSTATUS_BAD;
-				} else if (vfp->mcast_sl == vfp->base_sl) {
+				} else if (pQos->mcast_sl == pQos->base_sl) {
 					IB_LOG_ERROR_FMT(__func__,
-						"VFabric %s: Routing algorithm %s requires multicast isolation, but MulticastSL matches BaseSL",
-						vfp->name, rm->name);
+						"QOSGroup %s: Routing algorithm %s requires multicast isolation, but MulticastSL matches BaseSL",
+						pQos->name, rm->name);
 					ret = VSTATUS_BAD;
 				}
 			}
 		}
-		if (vfp->resp_sl != UNDEFINED_XML8) {
-			if(!bitset_test(usedSLs, vfp->resp_sl))
-				*numSCs += rm->funcs.num_routing_scs(vfp->resp_sl, 0);
-			bitset_set(usedSLs, vfp->resp_sl);
+		if (pQos->resp_sl != UNDEFINED_XML8) {
+			if(!bitset_test(usedSLs, pQos->resp_sl))
+				*numSCs += rm->funcs.num_routing_scs(pQos->resp_sl, 0);
+			bitset_set(usedSLs, pQos->resp_sl);
 		}
-		if (vfp->mcast_sl != UNDEFINED_XML8) {
-			if(!bitset_test(usedSLs, vfp->mcast_sl))
-				*numSCs += rm->funcs.num_routing_scs(vfp->mcast_sl, 1);
-			bitset_set(usedSLs, vfp->mcast_sl);
-			if (!rm->funcs.mcast_isolation_required() && vfp->base_sl != vfp->mcast_sl) {
+		if (pQos->mcast_sl != UNDEFINED_XML8) {
+			if(!bitset_test(usedSLs, pQos->mcast_sl))
+				*numSCs += rm->funcs.num_routing_scs(pQos->mcast_sl, 1);
+			bitset_set(usedSLs, pQos->mcast_sl);
+			if (!rm->funcs.mcast_isolation_required() && pQos->base_sl != pQos->mcast_sl) {
 					IB_LOG_WARN_FMT(__func__,
-						"VFabric %s: Including configured MulticastSL %d, although routing algorithm %s doesn't require multicast isolation",
-						vfp->name, (unsigned)vfp->mcast_sl, rm->name);
+						"QOSGroup %s: Including configured MulticastSL %d, although routing algorithm %s doesn't require multicast isolation",
+						pQos->name, (unsigned)pQos->mcast_sl, rm->name);
 			}
 		}
 	}
@@ -316,31 +320,31 @@ _handle_preassigned_sl(RoutingModule_t *rm, VirtualFabrics_t *vfs, bitset_t *use
 }
 
 static Status_t
-_handle_unassigned_sl(VF_t *vfp, uint8_t *sl, bitset_t *usedSLs, int *noqos, boolean highsls,
+_handle_unassigned_sl(QosConfig_t *pQos, uint8_t *sl, bitset_t *usedSLs, int *noqos, boolean highsls,
 	int maxsl, char *text, int *numSCs, int scspersl)
 {
 	int newsl;
 	if (*sl == UNDEFINED_XML8) {
-		if (vfp->qos_enable || *noqos == -1){
+		if (pQos->qos_enable || *noqos == -1){
 			if (!highsls) {
 				newsl = bitset_find_first_zero(usedSLs);
 				if (newsl >= maxsl) {
-					IB_LOG_ERROR_FMT(__func__, "VFabric %s: no unused SLs < %d available for %s",
-						vfp->name, maxsl, text);
+					IB_LOG_ERROR_FMT(__func__, "QOSGroup %s: no unused SLs < %d available for %s",
+						pQos->name, maxsl, text);
 					return VSTATUS_BAD;
 				}
 			} else {
 				newsl = bitset_find_last_zero(usedSLs);
 				if (newsl == -1) {
-					IB_LOG_ERROR_FMT(__func__, "VFabric: %s no unused SLs available for %s",
-						vfp->name, text);
+					IB_LOG_ERROR_FMT(__func__, "QOSGroup: %s no unused SLs available for %s",
+						pQos->name, text);
 					return VSTATUS_BAD;
 				}
 			}
 			bitset_set(usedSLs, newsl);
 			*numSCs += scspersl;
 			*sl = newsl;
-			if (!vfp->qos_enable) *noqos = newsl;
+			if (!pQos->qos_enable) *noqos = newsl;
 		} else {
 			*sl = *noqos;
 		}
@@ -353,6 +357,7 @@ _handle_unassigned_sl(VF_t *vfp, uint8_t *sl, bitset_t *usedSLs, int *noqos, boo
 // in sm_l.h
 extern Status_t sm_update_bw(RoutingModule_t *rm, VirtualFabrics_t *VirtualFabrics);
 extern Status_t sm_assign_scs_to_sls_FixedMap(RoutingModule_t *rm, VirtualFabrics_t *VirtualFabrics);
+extern Status_t sm_assign_scs_to_sls_NonFixedMap(RoutingModule_t *rm, VirtualFabrics_t *VirtualFabrics);
 
 // Routing Functions available to any routing algorithm
 
@@ -515,17 +520,20 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 	if (switches != old_topology.max_sws || topology_passcount == 0) {
 		topology_cost_path_changes = 1;
 	}
-	for (k = 0, kNumNodes = 0; k < switches; k++, kNumNodes += switches) {
-		for (i = 0, iNumNodes = 0; i < switches; i++, iNumNodes += switches) {
 
-			ik = iNumNodes + k;
+	for (k = 0, kNumNodes = 0; k < switches; k++, kNumNodes += switches) {
+#ifndef __VXWORKS__
+#pragma omp parallel for private(j, ij, ik, kj, value) shared(cost, path)
+#endif
+		for (i = 0; i < switches; ++i) {
+
+			ik = Index(i, k);
 
 			if (cost[ik] == Cost_Infinity) {
 				continue;
 			}
 
-			for (j = i + 1, ij = iNumNodes + i + 1, kj = kNumNodes + i + 1;
-			     j < switches; ++j, ++ij, ++kj) {
+			for (j = i + 1, ij = Index(i, j), kj = kNumNodes + i + 1; j < switches; ++j, ++ij, ++kj) {
 
 				if ((value = cost[ik] + cost[kj]) < cost[ij]) {
 					cost[ij] = value;
@@ -534,7 +542,7 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 
 					path[ij] = path[ik];
 					path[Index(j, i)] = path[Index(j, k)];
-
+					
 				} else if (value == cost[ij]) {
 					sm_path_portmask_merge(path + ij, path + ik);
 					sm_path_portmask_merge(path + Index(j, i), path + Index(j, k));
@@ -571,6 +579,7 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 				}
 			}
 			
+
 			/* PR 115770. If there is any switch cost/path change (including removal of switches),
 			 * set topology_cost_path_changes which will force full LFT reprogramming for all switches.
 			 */
@@ -587,6 +596,9 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 				topology_cost_path_changes = 1;
 			}
 		}
+
+
+
 
 		if (sm_useIdealMcSpanningTreeRoot) {
 			if (sw && sw->nodeInfo.NodeGUID == sm_mcSpanningTreeRootGuid) {
@@ -642,6 +654,9 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 		}
 		sw = sw->type_next;
 	}
+
+
+
 
 	if (!sm_useIdealMcSpanningTreeRoot)
 		return VSTATUS_OK;
@@ -796,15 +811,40 @@ sm_routing_func_calc_cost_matrix_floyds(Topology_t * topop, int switches, unsign
 }
 
 int
-sm_routing_func_override_in_use_false(void)
+sm_routing_func_routing_mode_noop(void)
+{
+	return STL_ROUTE_NOP;
+}
+
+int
+sm_routing_func_routing_mode_linear(void)
+{
+	return STL_ROUTE_LINEAR;
+}
+
+boolean
+sm_routing_func_false(void)
 {
 	return 0;
 }
 
-int
-sm_routing_func_override_in_use_true(void)
+boolean
+sm_routing_func_true(void)
 {
 	return 1;
+}
+
+boolean
+sm_routing_func_node_false(Topology_t *topop, Node_t *nodep)
+{
+	return 0;
+}
+
+
+STL_LID
+sm_routing_func_get_reserved_lid(Topology_t * topop, Node_t * nodep, const Port_t* portp)
+{
+	return STL_LID_RESERVED;
 }
 
 Status_t
@@ -873,12 +913,20 @@ sm_routing_func_copy_routing_lfts(Topology_t *src_topop, Topology_t *dst_topop)
 			Node_t *oldnodep = nodep->old;
 			if (oldnodep) {
 				Port_t *portp, *oldportp;
-				nodep->numLidsRouted = oldnodep->numLidsRouted;
+				if (!nodep->numLidsRouted) nodep->numLidsRouted = oldnodep->numLidsRouted;
 				for_all_ports(nodep, portp) {
 					if (sm_valid_port(portp)) {
 						oldportp = sm_get_port(oldnodep, portp->index);
 						if (sm_valid_port(oldportp)) {
 							portp->portData->lidsRouted = oldportp->portData->lidsRouted;
+							/* PR: 143104 Get numLidsRouted from the next Switch, if it existed in the old topology. 
+							 * Note the NodeGUID comparison below is a sanity check */
+							Node_t *nextSwp = sm_find_node(dst_topop, portp->nodeno);
+							if (nextSwp && (nextSwp->nodeInfo.NodeType == NI_TYPE_SWITCH) && nextSwp->oldExists) {
+								Node_t *oldnextSwp = nextSwp->old;
+								if (!nextSwp->numLidsRouted && (nextSwp->nodeInfo.NodeGUID == oldnextSwp->nodeInfo.NodeGUID))
+									nextSwp->numLidsRouted = oldnextSwp->numLidsRouted;
+							}
 						}
 					}
 				}
@@ -944,13 +992,6 @@ sm_routing_func_init_switch_routing_lfts(Topology_t * topop, int * routing_neede
 }
 
 Status_t
-sm_routing_func_setup_switches_lrdr_wave_discovery_order(Topology_t * topop, int rebalance,
-											int routing_needed)
-{
-	return sm_setup_switches_lrdr_wave_discovery_order(topop, rebalance, routing_needed);
-}
-
-Status_t
 sm_routing_func_calculate_lft(Topology_t * topop, Node_t * switchp)
 {
 	return sm_calculate_lft(topop, switchp);
@@ -970,8 +1011,13 @@ sm_routing_func_setup_xft(Topology_t *topop, Node_t *switchp, Node_t *nodep, Por
 	uint8_t numLids;
 	int lidsRoutedInc;
 	int offset=0;
-	SwitchportToNextGuid_t *ordered_ports = (SwitchportToNextGuid_t *)topop->pad;
 	int end_port = 0;
+#ifdef __VXWORKS__
+        SwitchportToNextGuid_t *ordered_ports = (SwitchportToNextGuid_t *)topop->pad;
+        memset(ordered_ports, 0, (sizeof(SwitchportToNextGuid_t) + sizeof(GuidCounter_t)) * switchp->nodeInfo.NumPorts);
+#else
+        SwitchportToNextGuid_t ordered_ports[MAX_STL_PORTS] = {{0}};
+#endif /* __VXWORKS__ */
 
 	IB_ENTER(__func__, switchp, nodep, orig_portp, 0);
 	
@@ -1018,8 +1064,6 @@ sm_routing_func_setup_xft(Topology_t *topop, Node_t *switchp, Node_t *nodep, Por
 	//	the ports which go to node[nodeno].
 	//
 	if (orig_portp->portData->lmc == 0) {
-		memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t));
-
 		// select best port, _select_ports will return 1 or 0 (no path)
 		if ((end_port =  topop->routingModule->funcs.select_ports(topop, switchp, j, ordered_ports, 1)) == 0) {
 			IB_LOG_ERROR_FMT(__func__,
@@ -1038,13 +1082,16 @@ sm_routing_func_setup_xft(Topology_t *topop, Node_t *switchp, Node_t *nodep, Por
 		}
 
 	} else { // lmc > 0
-		memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t) * switchp->nodeInfo.NumPorts);
-
 		end_port =  topop->routingModule->funcs.select_ports(topop, switchp, j, ordered_ports, 0);
 		if (!end_port) {
 			IB_LOG_ERROR_FMT(__func__,
 				"Failed to find outbound ports on NodeGUID "FMT_U64" to NodeGUID "FMT_U64" Port %d",
 				switchp->nodeInfo.NodeGUID, nodep->nodeInfo.NodeGUID, orig_portp->index);
+			IB_EXIT(__func__, VSTATUS_BAD);
+			return VSTATUS_BAD;
+		}
+		if(end_port >= MAX_STL_PORTS) {
+			IB_LOG_ERROR_FMT(__func__,"Number of ports are greater than maximum number of ports");
 			IB_EXIT(__func__, VSTATUS_BAD);
 			return VSTATUS_BAD;
 		}
@@ -1099,7 +1146,7 @@ sm_routing_func_select_ports(Topology_t *topop, Node_t *switchp, int endIndex, S
 	SmPathPortmask_t ports;
 	uint8_t cport;
 	uint8_t doSpineCheck;
-	uint8_t      end_port = 0;
+	uint8_t end_port = 0;
 
 	i = switchp->swIdx;
 	j = endIndex;
@@ -1133,6 +1180,7 @@ sm_routing_func_select_ports(Topology_t *topop, Node_t *switchp, int endIndex, S
 				best_switchLidsRouted = next_nodep->numLidsRouted;
 				ordered_ports[0].portp = portp;
 				ordered_ports[0].guid = next_nodep->nodeInfo.NodeGUID;
+				ordered_ports[0].sysGuid = next_nodep->nodeInfo.SystemImageGUID;
 				ordered_ports[0].nextSwp = next_nodep;
 				end_port = 1;
 				continue;
@@ -1176,6 +1224,7 @@ sm_routing_func_select_ports(Topology_t *topop, Node_t *switchp, int endIndex, S
 
 			ordered_ports[end_port].portp = portp;
 			ordered_ports[end_port].guid = next_nodep->nodeInfo.NodeGUID;
+			ordered_ports[end_port].sysGuid = next_nodep->nodeInfo.SystemImageGUID;
 			ordered_ports[end_port].nextSwp = next_nodep;
 			++end_port;
 		}
@@ -1187,7 +1236,12 @@ sm_routing_func_select_ports(Topology_t *topop, Node_t *switchp, int endIndex, S
 Status_t
 sm_routing_func_setup_pgs(struct _Topology *topop, struct _Node * srcSw, struct _Node * dstSw)
 {
-	SwitchportToNextGuid_t * ordered_ports = (SwitchportToNextGuid_t*) topop->pad;
+#ifdef __VXWORKS__
+	SwitchportToNextGuid_t *ordered_ports = (SwitchportToNextGuid_t *)topop->pad;
+	memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t) * srcSw->nodeInfo.NumPorts);
+#else
+	SwitchportToNextGuid_t ordered_ports[MAX_STL_PORTS] = {{0}};
+#endif /* __VXWORKS__ */
 
 	if (!srcSw || !dstSw) {
 		IB_LOG_ERROR_FMT(__func__, "Invalid source or destination pointer.");
@@ -1217,14 +1271,11 @@ sm_routing_func_setup_pgs(struct _Topology *topop, struct _Node * srcSw, struct 
 		return VSTATUS_BAD;
 	}
 
-	memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t) * srcSw->nodeInfo.NumPorts);
-
 	int end_port =  topop->routingModule->funcs.select_ports(topop, srcSw, dstSw->swIdx, ordered_ports, 0);
 	if (end_port <= 1) {
 		return VSTATUS_OK;
 	}
 
-	
 	STL_PORTMASK pgMask = 0;
 	int i;
 	for (i = 0; i < end_port; ++i) {
@@ -1262,9 +1313,9 @@ sm_routing_func_setup_pgs(struct _Topology *topop, struct _Node * srcSw, struct 
 		STL_LID portLid = 0;
 		for_all_port_lids(&dstSw->port[0], portLid) {
 			if (portLid < pgftLen) {
-			srcSw->arChange |= (pgft[portLid] != pgid);
-			pgft[portLid] = pgid;
-		}
+				srcSw->arChange |= (pgft[portLid] != pgid);
+				pgft[portLid] = pgid;
+			}
 		}
 
 		// iterate through the end nodes attached to dstSw,
@@ -1299,7 +1350,12 @@ sm_routing_func_get_port_group(Topology_t *topop, Node_t *switchp, Node_t *nodep
 {
 	int i, j;
 	int end_port = 0;
+#ifdef __VXWORKS__
 	SwitchportToNextGuid_t *ordered_ports = (SwitchportToNextGuid_t *)topop->pad;
+	memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t) * switchp->nodeInfo.NumPorts);
+#else
+	SwitchportToNextGuid_t ordered_ports[MAX_STL_PORTS] = {{0}};
+#endif /* __VXWORKS__ */
 
 	IB_ENTER(__func__, switchp, nodep, 0, 0);
 	
@@ -1318,7 +1374,6 @@ sm_routing_func_get_port_group(Topology_t *topop, Node_t *switchp, Node_t *nodep
 		return 0;
 	}
 
-	memset(ordered_ports, 0, sizeof(SwitchportToNextGuid_t) * switchp->nodeInfo.NumPorts);
 
 	end_port =  topop->routingModule->funcs.select_ports(topop, switchp, j, ordered_ports, 0);
 
@@ -1359,6 +1414,7 @@ sm_routing_func_select_scsc_map(Topology_t *topop, Node_t *switchp, int getSecon
 	STL_SCSC_MULTISET *scsc=NULL;
 	int portToSet = 0;
 	int needsSet = 0;
+	STL_SCSCMAP *scscTmp= NULL;
 
 	*numBlocks = 0;
 
@@ -1379,16 +1435,12 @@ sm_routing_func_select_scsc_map(Topology_t *topop, Node_t *switchp, int getSecon
 
 	for_all_physical_ports(switchp, portp) {
 		if (!sm_valid_port(portp) || portp->state <= IB_PORT_DOWN) continue;
-		if (!portp->portData->scscMap) {
-			// unexpected error
-			(void) vs_pool_free(&sm_pool, scsc);
-			return VSTATUS_BAD;
-		}
 
 		needsSet = !portp->portData->current.scsc ||  sm_config.forceAttributeRewrite;
 		if (!needsSet) {
 			for (i=1; i<=switchp->nodeInfo.NumPorts; i++) {
-				if (memcmp((void *)&scsc->SCSCMap, (void *)&portp->portData->scscMap[i-1], sizeof(STL_SCSCMAP)) != 0) {
+				scscTmp = sm_lookupPortDataSCSCMap(portp, i-1, 0);
+				if (!scscTmp || (memcmp((void *)&scsc->SCSCMap, (void *)scscTmp, sizeof(STL_SCSCMAP)) != 0)) {
 					needsSet = 1;
 					break;
 				}
@@ -1454,8 +1506,8 @@ sm_routing_func_fill_stl_vlarb_table(Topology_t *topop, Node_t *nodep, Port_t *p
 }
 
 Status_t
-sm_routing_func_select_path_lids(Topology_t *topop, Port_t *srcPortp, uint16_t slid, Port_t *dstPortp,
-	uint16_t dlid, uint16_t *outSrcLids, uint8_t *outSrcLen, uint16_t *outDstLids, uint8_t *outDstLen)
+sm_routing_func_select_path_lids(Topology_t *topop, Port_t *srcPortp, STL_LID slid, Port_t *dstPortp,
+	STL_LID dlid, STL_LID *outSrcLids, uint8_t *outSrcLen, STL_LID *outDstLids, uint8_t *outDstLen)
 {
 	return sm_select_path_lids(topop, srcPortp, slid, dstPortp, dlid, outSrcLids, outSrcLen, outDstLids, outDstLen);
 }
@@ -1465,6 +1517,7 @@ sm_routing_func_process_swIdx_change_noop(Topology_t * topop, int old_idx, int n
 {
 	return VSTATUS_OK;
 }
+
 
 int
 sm_routing_func_check_switch_path_change(Topology_t * oldtp, Topology_t * newtp, Node_t *switchp)
@@ -1502,27 +1555,15 @@ sm_routing_func_needs_lft_recalc(Topology_t * topop, Node_t * nodep)
 }
 
 boolean
-sm_routing_func_can_send_partial_routes_true(void)
-{
-	return 1;
-}
-
-boolean
-sm_routing_func_can_send_partial_routes_false(void)
-{
-	return 0;
-}
-
-boolean
 sm_routing_func_do_spine_check(Topology_t * topop, Node_t * switchp)
 {
 	return sm_config.spine_first_routing && switchp->internalLinks;
 }
 
 Status_t
-sm_routing_func_write_minimal_lft_blocks(Topology_t * topop, Node_t * switchp, int use_lr_dr_mix, uint8_t * path)
+sm_routing_func_write_minimal_lft_blocks(Topology_t * topop, Node_t * switchp, SmpAddr_t * addr)
 {
-	return sm_write_minimal_lft_blocks(topop, switchp, use_lr_dr_mix, path);
+	return sm_write_minimal_lft_blocks(topop, switchp, addr);
 }
 
 Status_t
@@ -1592,17 +1633,23 @@ sm_routing_func_assign_scs_to_sls_fixedmap(RoutingModule_t *rm, VirtualFabrics_t
 }
 
 Status_t
+sm_routing_func_assign_scs_to_sls_nonfixedmap(RoutingModule_t *rm, VirtualFabrics_t *VirtualFabrics)
+{
+	return sm_assign_scs_to_sls_NonFixedMap(rm, VirtualFabrics);
+}
+
+Status_t
 sm_routing_func_assign_sls(RoutingModule_t *rm, VirtualFabrics_t *vfs)
 {
     int noqos_base = -1;
     int noqos_resp = -1;
     int noqos_mcast = -1;
-    int vf;
+    int qos;
     Status_t ret = VSTATUS_OK;
     bitset_t usedSLs;
 	int numSCs = 0;
 
-    if (!vfs || (vfs->number_of_vfs == 0) || (vfs->number_of_vfs_all == 0) )  {
+    if (!vfs)  {
         return ret;
     }
 
@@ -1613,73 +1660,48 @@ sm_routing_func_assign_sls(RoutingModule_t *rm, VirtualFabrics_t *vfs)
 	}
 
     // Now assign the unspecified SLs.
-    // Assign SLs to VFs in the order they appear in the config file.
-    // [This provides a predicable output for users.]
-    for (vf=0; vf < vfs->number_of_vfs_all; vf++) {
-        VF_t *vfp = &vfs->v_fabric_all[vf];
+    // Assign SLs to QOSGroups in the order they appear in the config file.
+    // [This provides a predictable output for users.]
+    for (qos=0; qos < vfs->number_of_qos_all; qos++) {
+        QosConfig_t *pQos = &vfs->qos_all[qos];
 
-		if (VSTATUS_OK != (ret = _handle_unassigned_sl(vfp, &vfp->base_sl, &usedSLs, &noqos_base,
-			0, MAX_SLS, "BaseSL", &numSCs, rm->funcs.num_routing_scs(vfp->resp_sl, 0))))
+		if (VSTATUS_OK != (ret = _handle_unassigned_sl(pQos, &pQos->base_sl, &usedSLs, &noqos_base,
+			0, MAX_SLS, "BaseSL", &numSCs, rm->funcs.num_routing_scs(pQos->base_sl, 0))))
 			goto bail;
-		if (vfp->requires_resp_sl) {
-			if (VSTATUS_OK != (ret = _handle_unassigned_sl(vfp, &vfp->resp_sl, &usedSLs, &noqos_resp,
-				1, STL_MAX_SLS, "RespSL", &numSCs, rm->funcs.num_routing_scs(vfp->resp_sl, 0))))
+		if (pQos->requires_resp_sl) {
+			if (VSTATUS_OK != (ret = _handle_unassigned_sl(pQos, &pQos->resp_sl, &usedSLs, &noqos_resp,
+				1, STL_MAX_SLS, "RespSL", &numSCs, rm->funcs.num_routing_scs(pQos->resp_sl, 0))))
 				goto bail;
-		} else if (vfp->resp_sl == UNDEFINED_XML8) {
-			vfp->resp_sl = vfp->base_sl;
+		} else
+		if (pQos->resp_sl == UNDEFINED_XML8) {
+			pQos->resp_sl = pQos->base_sl;
         	if (sm_config.sm_debug_vf)
-            	IB_LOG_INFINI_INFO_FMT_VF(vfp->name, "",
-            	"Assigning RespSL to BaseSL %d", vfp->resp_sl);
+            	IB_LOG_INFINI_INFO_FMT_VF(pQos->name, "",
+            	"Assigning RespSL to BaseSL %d", pQos->resp_sl);
 		}
-		if (vfp->contains_mcast && rm->funcs.mcast_isolation_required()) {
-			if (VSTATUS_OK != (ret = _handle_unassigned_sl(vfp, &vfp->mcast_sl, &usedSLs,
+		if (pQos->contains_mcast && rm->funcs.mcast_isolation_required()) {
+			if (VSTATUS_OK != (ret = _handle_unassigned_sl(pQos, &pQos->mcast_sl, &usedSLs,
 				&noqos_mcast, 0, MAX_SLS, "MulticastSL", &numSCs,
-				rm->funcs.num_routing_scs(vfp->mcast_sl, 1))))
+				rm->funcs.num_routing_scs(pQos->mcast_sl, 1))))
 				goto bail;
-			numSCs += rm->funcs.num_routing_scs(vfp->mcast_sl, 1);
-		} else if (vfp->mcast_sl == UNDEFINED_XML8) {
-			vfp->mcast_sl = vfp->base_sl;
+		} else if (pQos->mcast_sl == UNDEFINED_XML8) {
+			pQos->mcast_sl = pQos->base_sl;
         	if (sm_config.sm_debug_vf)
-            	IB_LOG_INFINI_INFO_FMT_VF(vfp->name, "",
-            	"Assigning multicast SL to base SL %d", vfp->mcast_sl);
+            	IB_LOG_INFINI_INFO_FMT_VF(pQos->name, "",
+            	"Assigning multicast SL to base SL %d", pQos->mcast_sl);
 		}
     }
 
-    // Assign SLs to the active VF list
-    uint32_t activeVfIdx;
-
-    for (vf=0; vf < vfs->number_of_vfs_all; vf++){
-
-        if (!vfs->v_fabric_all[vf].standby) {
-            activeVfIdx = findVfIdxInActiveList(&vfs->v_fabric_all[vf], vfs, TRUE);
-
-            if (activeVfIdx != -1) {
-                vfs->v_fabric[activeVfIdx].base_sl = vfs->v_fabric_all[vf].base_sl;
-                vfs->v_fabric[activeVfIdx].resp_sl = vfs->v_fabric_all[vf].resp_sl;
-                vfs->v_fabric[activeVfIdx].mcast_sl = vfs->v_fabric_all[vf].mcast_sl;
-            }
-        }
-    }
-
-    IB_LOG_INFINI_INFO_FMT(__func__, "%d active VF(s), %d standby VF(s) requires %d SLs and %d SCs for operation",
-                           vfs->number_of_vfs, vfs->number_of_vfs_all-vfs->number_of_vfs,
-                           (int)bitset_nset(&usedSLs), numSCs);
+	// TODO: numSCs here does not take into account whether or not MulticastSLs can share
+	//       the same VL, or if multicast is being overlayed onto the base. These are
+	//       determined by the routing algorithm. Only side effect right now is printing
+	//       the wrong information to the log. numSCs isn't used anywhere else.
+    IB_LOG_INFINI_INFO_FMT(__func__, "%d QOSGroups require %d SLs and %d SCs for operation",
+                           vfs->number_of_qos_all, (int)bitset_nset(&usedSLs), numSCs);
 
 bail:
     bitset_free(&usedSLs);
     return ret;
-}
-
-boolean
-sm_routing_func_mcast_isolation_not_required(void)
-{
-	return 0;
-}
-
-boolean
-sm_routing_func_mcast_isolation_is_required(void)
-{
-	return 1;
 }
 
 int
@@ -1700,6 +1722,27 @@ sm_routing_func_one_routing_scs(int sl, boolean mcast_sl)
 	return 1;
 }
 
+static void
+sm_routing_func_delete_node(Node_t* nodep) {
+	if (nodep->routingData) {
+		vs_pool_free(&sm_pool, nodep->routingData);
+		nodep->routingData = NULL;
+	}
+}
+
+int
+sm_routing_func_no_oversubscribe(int sl, boolean mcast_sl)
+{
+	return 0;
+}
+
+Status_t
+sm_routing_func_process_xml_config_noop(void)
+{
+        return VSTATUS_OK;
+}
+
+
 RoutingFuncs_t defaultRoutingFuncs = {
     pre_process_discovery:		sm_routing_func_pre_process_discovery_noop,
     discover_node:				sm_routing_func_discover_node_noop,
@@ -1710,9 +1753,12 @@ RoutingFuncs_t defaultRoutingFuncs = {
     allocate_cost_matrix:		sm_routing_func_alloc_cost_matrix_floyds,
     initialize_cost_matrix:		sm_routing_func_init_cost_matrix_floyds,
     calculate_cost_matrix:		sm_routing_func_calc_cost_matrix_floyds,
+    routing_mode:				sm_routing_func_routing_mode_linear,
+    requires_dr:				sm_routing_func_node_false,
+    extended_scsc_in_use:		sm_routing_func_false,
     copy_routing:				sm_routing_func_copy_routing_lfts,
     init_switch_routing:		sm_routing_func_init_switch_routing_lfts,
-    setup_switches_lrdr:		sm_routing_func_setup_switches_lrdr_wave_discovery_order,
+	setup_switches_lrdr:		sm_setup_switches_lrdr_wave_discovery_order,
     calculate_routes: 			sm_routing_func_calculate_lft,
     setup_xft:					sm_routing_func_setup_xft,
     select_ports:				sm_routing_func_select_ports,
@@ -1724,13 +1770,13 @@ RoutingFuncs_t defaultRoutingFuncs = {
     select_scvl_map:			sm_routing_func_select_scvl_map_fixedmap,
     select_vlvf_map:			sm_routing_func_select_vlvf_map,
     select_vlbw_map:			sm_routing_func_select_vlbw_map,
-	select_scvlr_map:			sm_routing_func_select_scvlr_map,
+    select_scvlr_map:			sm_routing_func_select_scvlr_map,
     fill_stl_vlarb_table:		sm_routing_func_fill_stl_vlarb_table,
     select_path_lids:			sm_routing_func_select_path_lids,
     process_swIdx_change:		sm_routing_func_process_swIdx_change_noop,
     check_switch_path_change:	sm_routing_func_check_switch_path_change,
     needs_routing_recalc: 		sm_routing_func_needs_lft_recalc,
-    can_send_partial_routes:	sm_routing_func_can_send_partial_routes_false,
+    can_send_partial_routes:	sm_routing_func_false,
 	do_spine_check:				sm_routing_func_do_spine_check,
     write_minimal_routes:		sm_routing_func_write_minimal_lft_blocks,
     write_full_routes_LR:		sm_routing_func_write_full_lfts_LR,
@@ -1740,8 +1786,12 @@ RoutingFuncs_t defaultRoutingFuncs = {
 	update_bw:					sm_routing_func_update_bw,
 	assign_scs_to_sls:			sm_routing_func_assign_scs_to_sls_fixedmap,
 	assign_sls:					sm_routing_func_assign_sls,
-	mcast_isolation_required:	sm_routing_func_mcast_isolation_not_required,
+	mcast_isolation_required:	sm_routing_func_false,
+	overlay_mcast:				sm_routing_func_false,
 	min_vls:					sm_routing_func_min_vls,
 	max_vls:					sm_routing_func_max_vls,
-	num_routing_scs:			sm_routing_func_one_routing_scs
+	num_routing_scs:			sm_routing_func_one_routing_scs,
+    oversubscribe_factor:		sm_routing_func_no_oversubscribe,
+	delete_node:				sm_routing_func_delete_node,
+	process_xml_config:			sm_routing_func_process_xml_config_noop
 };

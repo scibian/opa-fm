@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT2 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -109,7 +109,7 @@ hcom_server_init
 
 	// Initialize session data
 	hdl->buf_len = buf_len;
-	cs_strlcpy(hdl->path,socket_path, HSM_COM_SVR_MAX_PATH);
+	StringCopy(hdl->path,socket_path, HSM_COM_SVR_MAX_PATH);
 	hdl->callback = callback;
 
 

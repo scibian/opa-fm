@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -126,7 +126,7 @@ endif
 ifeq "$(BUILD_TARGET)" "ATOM"
 CLOCAL = -DADAPTOS -DADAPTOS_VXWORKS -DTF1_INCLUDE_X509 -DOPENSSL_NO_ENGINE
 #add include for config_compression which is in Xml directory
-CLOCAL += -I$(TL_DIR)/Xml -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/openssl-1_0_1/include -I$(TGT_DIR)/components/ip_net2-6.9/ipssl2/openssl-1_0_1/include/openssl -I$(TGT_DIR)/components/ip_net2-6.9/ipssl2/openssl-1_0_1/include -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/openssl-1_0_1/ -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/include -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/config/
+CLOCAL += -I$(TL_DIR)/Xml -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/$(OPENSSL_VER)/include -I$(TGT_DIR)/components/ip_net2-6.9/ipssl2/$(OPENSSL_VER)/include/openssl -I$(TGT_DIR)/components/ip_net2-6.9/ipssl2/$(OPENSSL_VER)/include -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/$(OPENSSL_VER)/ -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/include -I$(TGT_DIR)/components/ip_net2-6.9/ipcrypto/config/
 else
 ifeq ($(BUILD_TARGET_OS),VXWORKS)
 CLOCAL = -DOPENSSL_NO_IDEA -DADAPTOS -DADAPTOS_VXWORKS -DTF1_INCLUDE_X509 -DOPENSSL_NO_ENGINE
@@ -143,7 +143,12 @@ CCLOCAL += -DCOMMON_IS_COMPONENT
 endif
 LOCALDEPLIBS = 
 ifeq ($(BUILD_TARGET_OS),VXWORKS)
-LOCAL_INCLUDE_DIRS      = $(TL_DIR)/tmsTarget/src/tms/webif $(TORNADO_INCLUDE_DIR)/tms/idb $(TORNADO_INCLUDE_DIR)/tms/common $(TL_DIR)/BSP/bspcommon/wrs/h $(TL_DIR)/BSP/bspcommon/wrs/config $(TL_DIR)/BSP/bspcommon/h $(TORNADO_INCLUDE_DIR)/ssecure $(TORNADO_INCLUDE_DIR)/ssecure/adaptos $(TL_DIR)/Esm/ib/include
+ifneq (STL1,$(PRODUCT))
+LOCAL_INCLUDE_DIRS = $(TL_DIR)/tmsTarget/src/tms/webif.STL2
+else
+LOCAL_INCLUDE_DIRS = $(TL_DIR)/tmsTarget/src/tms/webif
+endif
+LOCAL_INCLUDE_DIRS += $(TORNADO_INCLUDE_DIR)/tms/idb $(TORNADO_INCLUDE_DIR)/tms/common $(TL_DIR)/BSP/bspcommon/wrs/h $(TL_DIR)/BSP/bspcommon/wrs/config $(TL_DIR)/BSP/bspcommon/h $(TORNADO_INCLUDE_DIR)/ssecure $(TORNADO_INCLUDE_DIR)/ssecure/adaptos $(TL_DIR)/Esm/ib/include
 endif
 
 # Include Make Rules definitions and rules

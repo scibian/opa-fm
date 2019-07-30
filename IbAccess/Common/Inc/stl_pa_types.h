@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -60,13 +60,72 @@ extern "C" {
 
 /* ClassPortInfo Capability bits */
 
-#define STL_PA_CPI_CAPMASK_ABSTIMEQUERY 0x0100
+typedef STL_FIELDUNION8(STL_PA_CLASS_PORT_INFO_CAPABILITY_MASK, 16,
+		Reserved1:                  2,      /* start of class dependent bits */
+		IsPerImageListsSupported:   1,      /* query to get group/vf list from specific images */
+		IsVFFocusTypesSupported:    1,      /* VF level Focus types */
+		IsTopologyInfoSupported:    1,      /* query to get the topology info from PM */
+		                                    /* (GetGroupNodeInfo and GetGroupLinkInfo) */
+		IsExtFocusTypesSupported:   1,      /* RO - PA supports extended focus types */
+		                                    /* (unexpclrport, norespport and */
+		                                    /* skippedport) in GetFocusPorts and */
+		                                    /* adds GetFocusPortsMultiSelect */
+		Reserved3:                  1,
+		IsAbsTimeQuerySupported:    1,      /* RO - PA supports AbsImageTime queries w/ absoluteTime in Image ID */
+		Reserved2:                  8);     /* class independent bits*/
 
-typedef STL_FIELDUNION3(STL_PA_CLASS_PORT_INFO_CAPABILITY_MASK, 16,
-		Reserved1: 					7,     	/* start of class dependent bits */
-		IsAbsTimeQuerySupported:	1,		/* RO - PA supports queries */
-											/* w/ absoluteTime in Image ID */
-		Reserved2: 					8);		/* class independent bits*/
+/*
+ * PA capability mask defines
+ */
+#define STL_PA_CPI_CAPMASK_ABSTIMEQUERY   0x0100
+#define STL_PA_CPI_CAPMASK_EXT_FOCUSTYPES 0x0400
+#define STL_PA_CPI_CAPMASK_TOPO_INFO      0x0800
+#define STL_PA_CPI_CAPMASK_VF_FOCUSTYPES  0x1000
+#define STL_PA_CPI_CAPMASK_IMAGE_LISTS    0x2000
+
+static __inline void
+StlPaClassPortInfoCapMask(char buf[80], uint16 cmask)
+{
+	if (!cmask) {
+		snprintf(buf, 80, "-");
+	} else {
+		snprintf(buf, 80, "%s%s%s%s%s%s%s%s",
+			(cmask & STL_CLASS_PORT_CAPMASK_TRAP) ? "Trap " : "",
+			(cmask & STL_CLASS_PORT_CAPMASK_NOTICE) ? "Notice " : "",
+			(cmask & STL_CLASS_PORT_CAPMASK_CM2) ? "CapMask2 " : "",
+			/* Class Specific */
+			(cmask & STL_PA_CPI_CAPMASK_ABSTIMEQUERY) ? "AbsTime " : "",
+			(cmask & STL_PA_CPI_CAPMASK_EXT_FOCUSTYPES) ? "ExtFocusTypes " : "",
+			(cmask & STL_PA_CPI_CAPMASK_TOPO_INFO) ? "TopologyInfo " : "",
+			(cmask & STL_PA_CPI_CAPMASK_VF_FOCUSTYPES) ? "VFFocusTypes " : "",
+			(cmask & STL_PA_CPI_CAPMASK_IMAGE_LISTS) ? "ImageLists " : "");
+	}
+}
+
+static __inline void
+StlPaClassPortInfoCapMask2(char buf[80], uint32 cmask)
+{
+	if (!cmask) {
+		snprintf(buf, 80, "-");
+	} else {
+		buf[0] = '\0';
+	}
+}
+
+// Check to see if the VF Focus select is an UTIL BW category
+#define IS_FOCUS_SELECT_UTIL(SELECT) \
+	((SELECT == STL_PA_SELECT_UTIL_HIGH) || \
+	(SELECT == STL_PA_SELECT_UTIL_LOW) || \
+	(SELECT == STL_PA_SELECT_VF_UTIL_HIGH) || \
+	(SELECT == STL_PA_SELECT_VF_UTIL_LOW))
+
+// Check to see if it is a VF Focus select
+#define IS_VF_FOCUS_SELECT(SELECT) \
+	((SELECT == STL_PA_SELECT_VF_UTIL_HIGH) || \
+	(SELECT == STL_PA_SELECT_VF_UTIL_LOW) || \
+	(SELECT == STL_PA_SELECT_VF_UTIL_PKTS_HIGH) || \
+	(SELECT == STL_PA_SELECT_CATEGORY_VF_BUBBLE)  || \
+	(SELECT == STL_PA_SELECT_CATEGORY_VF_CONG))
 
 typedef struct _STL_PA_Group_List {
 	char					groupName[STL_PM_GROUPNAMELEN];	// \0 terminated - actual number indicated by numGroups
@@ -164,7 +223,7 @@ typedef struct _STL_PA_Group_Cfg_Rsp {
 	STL_PA_IMAGE_ID_DATA	imageId;
 	uint64					nodeGUID;
 	char					nodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
-	uint32					nodeLid;
+	STL_LID					nodeLid;
 	uint8					portNumber;
 	uint8					reserved[3];
 } PACK_SUFFIX STL_PA_PM_GROUP_CFG_RSP;
@@ -175,9 +234,11 @@ typedef struct _STL_PA_Group_Cfg_Rsp {
 #define STL_PA_PC_FLAG_UNEXPECTED_CLEAR 0x00000002 // was there an unexpected clear
 #define STL_PA_PC_FLAG_SHARED_VL        0x00000004 // for vf port counters, vl is shared >1 vf
 #define STL_PA_PC_FLAG_USER_COUNTERS    0x00000008 // for PA user controlled running counters
+#define STL_PA_PC_FLAG_CLEAR_FAIL       0x00000010 // indicates clear query failed however, data should be valid
+
 
 typedef struct _STL_PORT_COUNTERS_DATA {
-	uint32				nodeLid;
+	STL_LID				nodeLid;
 	uint8				portNumber;
 	uint8				reserved[3];
 	uint32				flags;
@@ -224,6 +285,7 @@ typedef struct _STL_PORT_COUNTERS_DATA {
 
 typedef union {
 	uint32	AsReg32;
+
 	struct stl_counter_select_mask { IB_BITFIELD28(uint32,
 		PortXmitData : 1,
 		PortRcvData : 1,
@@ -254,10 +316,11 @@ typedef union {
 		UncorrectableErrors : 1,
 		Reserved : 5)
 	} PACK_SUFFIX s;
+
 } CounterSelectMask_t;
 
 typedef struct _STL_CLR_PORT_COUNTERS_DATA {
-	uint32		NodeLid;
+	STL_LID		NodeLid;
 	uint8		PortNumber;
 	uint8		Reserved[3];
 	uint64		Reserved2;
@@ -311,6 +374,24 @@ typedef struct _STL_CONGESTION_WEIGHTS {
 #define STL_PM_PROCESS_CLR_32BIT_COUNTERS	0x00000010	// Enable Clearing of 32 bit Error Counters
 #define STL_PM_PROCESS_CLR_8BIT_COUNTERS	0x00000020	// Enable Clearing of 8 bit Error Counters
 
+static __inline
+void StlFormatPmFlags(char buf[80], uint32 pmFlags)
+{
+	snprintf(buf, 80, "%s=%s %s=%s %s=%s %s=%s",
+			"ProcessHFICntrs", pmFlags & STL_PM_PROCESS_HFI_COUNTERS ? "On" : "Off",
+			"ProcessVLCntrs",  pmFlags & STL_PM_PROCESS_VL_COUNTERS ? "On" : "Off",
+			"ClrDataCntrs",    pmFlags & STL_PM_PROCESS_CLR_DATA_COUNTERS ? "On" : "Off",
+			"Clr64bitErrCntrs", pmFlags & STL_PM_PROCESS_CLR_64BIT_COUNTERS ? "On" : "Off");
+}
+
+static __inline
+void StlFormatPmFlags2(char buf[80], uint32 pmFlags)
+{
+	snprintf(buf, 80, "%s=%s %s=%s",
+			"Clr32bitErrCntrs", pmFlags & STL_PM_PROCESS_CLR_32BIT_COUNTERS ? "On" : "Off",
+			"Clr8bitErrCntrs",  pmFlags & STL_PM_PROCESS_CLR_8BIT_COUNTERS ? "On" : "Off");
+}
+
 typedef struct _STL_PA_PM_Cfg_Data {
 	uint32					sweepInterval;
 	uint32					maxClients;
@@ -336,22 +417,25 @@ typedef struct _STL_MOVE_FREEZE_DATA {
 	STL_PA_IMAGE_ID_DATA	newFreezeImage;
 } PACK_SUFFIX STL_MOVE_FREEZE_DATA;
 
-#define STL_PA_SELECT_UTIL_HIGH			0x00020001			// highest first, descending
-#define STL_PA_SELECT_UTIL_MC_HIGH		0x00020081
+#define STL_PA_SELECT_UNEXP_CLR_PORT	0x00010101
+#define STL_PA_SELECT_NO_RESP_PORT		0x00010102
+#define STL_PA_SELECT_SKIPPED_PORT		0x00010103
+#define STL_PA_SELECT_UTIL_HIGH			0x00020001 // highest first, descending
+#define STL_PA_SELECT_UTIL_MC_HIGH		0x00020081 // not supported
 #define STL_PA_SELECT_UTIL_PKTS_HIGH	0x00020082
-#define STL_PA_SELECT_UTIL_LOW			0x00020101			// lowest first, ascending
-#define STL_PA_SELECT_UTIL_MC_LOW		0x00020102
-#define STL_PA_SELECT_CATEGORY_INTEG	0x00030001			// hightest first, descending
+#define STL_PA_SELECT_VF_UTIL_HIGH	0x00020083 // Only used with VFs
+#define STL_PA_SELECT_VF_UTIL_PKTS_HIGH	0x00020084 // Only used with VFs
+#define STL_PA_SELECT_UTIL_LOW			0x00020101 // lowest first, ascending
+#define STL_PA_SELECT_UTIL_MC_LOW		0x00020102 // not supported
+#define STL_PA_SELECT_VF_UTIL_LOW	0x00020103   // Only used with VFs
+#define STL_PA_SELECT_CATEGORY_INTEG	0x00030001 // hightest first, descending
 #define STL_PA_SELECT_CATEGORY_CONG		0x00030002
 #define STL_PA_SELECT_CATEGORY_SMA_CONG	0x00030003
 #define STL_PA_SELECT_CATEGORY_BUBBLE	0x00030004
 #define STL_PA_SELECT_CATEGORY_SEC		0x00030005
 #define STL_PA_SELECT_CATEGORY_ROUT		0x00030006
-
-#define STL_PA_FOCUS_STATUS_OK           0
-#define STL_PA_FOCUS_STATUS_PMA_IGNORE   1
-#define STL_PA_FOCUS_STATUS_PMA_FAILURE  2
-#define STL_PA_FOCUS_STATUS_TOPO_FAILURE 3
+#define STL_PA_SELECT_CATEGORY_VF_CONG		0x00030007  // Only used with VFs
+#define STL_PA_SELECT_CATEGORY_VF_BUBBLE	0x00030008  // Only used with VFs
 
 typedef struct _STL_FOCUS_PORTS_REQ {
 	char					groupName[STL_PM_GROUPNAMELEN];	// \0 terminated
@@ -361,9 +445,106 @@ typedef struct _STL_FOCUS_PORTS_REQ {
 	uint32					range;
 } PACK_SUFFIX STL_FOCUS_PORTS_REQ;
 
+typedef struct _STL_FOCUS_PORT_TUPLE {
+	uint32 	select;
+	uint8 	comparator;
+	uint8 	reserved[3];
+	uint64 	argument;
+} PACK_SUFFIX STL_FOCUS_PORT_TUPLE;
+
+#define MAX_NUM_FOCUS_PORT_TUPLES		8
+
+#define FOCUS_PORTS_LOGICAL_OPERATOR_INVALID 0
+#define FOCUS_PORTS_LOGICAL_OPERATOR_AND     1
+#define FOCUS_PORTS_LOGICAL_OPERATOR_OR      2
+
+#define FOCUS_PORTS_COMPARATOR_INVALID               0
+#define FOCUS_PORTS_COMPARATOR_GREATER_THAN          1
+#define FOCUS_PORTS_COMPARATOR_LESS_THAN             2
+#define FOCUS_PORTS_COMPARATOR_GREATER_THAN_OR_EQUAL 3
+#define FOCUS_PORTS_COMPARATOR_LESS_THAN_OR_EQUAL    4
+
+typedef struct _STL_FOCUS_PORTS_MULTISELECT_REQ {
+	char			groupName[STL_PM_GROUPNAMELEN];	// \0 terminated
+	STL_PA_IMAGE_ID_DATA	imageId;
+	uint32			start;
+	uint32			range;
+	STL_FOCUS_PORT_TUPLE	tuple[MAX_NUM_FOCUS_PORT_TUPLES];
+	uint8			logical_operator;
+	uint8			reserved[7];
+} PACK_SUFFIX STL_FOCUS_PORTS_MULTISELECT_REQ;
+
+#define STL_PA_FOCUS_STATUS_OK           0
+#define STL_PA_FOCUS_STATUS_PMA_IGNORE   1
+#define STL_PA_FOCUS_STATUS_PMA_FAILURE  2
+#define STL_PA_FOCUS_STATUS_TOPO_FAILURE 3
+#define STL_PA_FOCUS_STATUS_UNEXPECTED_CLEAR 4
+
+static __inline
+const char* StlFocusStatusToText(uint8 status)
+{
+	switch (status) {
+	case STL_PA_FOCUS_STATUS_OK:				return "OK";
+	case STL_PA_FOCUS_STATUS_PMA_IGNORE:		return "PMA Ignore";
+	case STL_PA_FOCUS_STATUS_PMA_FAILURE:		return "PMA Failure";
+	case STL_PA_FOCUS_STATUS_TOPO_FAILURE:		return "Topo Failure";
+	case STL_PA_FOCUS_STATUS_UNEXPECTED_CLEAR:	return "Unexp Clear";
+	default:									return "Unknown";
+	}
+}
+
+static __inline
+const char* StlFocusAttributeToText(uint32 attribute)
+{
+	switch (attribute) {
+	case STL_PA_SELECT_UNEXP_CLR_PORT:    return "Unexpected Clear";
+	case STL_PA_SELECT_NO_RESP_PORT:      return "No Response Ports";
+	case STL_PA_SELECT_SKIPPED_PORT:      return "Skipped Ports";
+	case STL_PA_SELECT_UTIL_HIGH:         return "High Utilization";
+	case STL_PA_SELECT_UTIL_PKTS_HIGH:    return "Packet Rate";
+	case STL_PA_SELECT_UTIL_LOW:          return "Low Utilization";
+	case STL_PA_SELECT_VF_UTIL_HIGH:      return "VF High Utilization";
+	case STL_PA_SELECT_VF_UTIL_PKTS_HIGH: return "VF Packet Rate";
+	case STL_PA_SELECT_VF_UTIL_LOW:       return "VF Low Utilization";
+	case STL_PA_SELECT_CATEGORY_INTEG:    return "Integrity Errors";
+	case STL_PA_SELECT_CATEGORY_CONG:     return "Congestion";
+	case STL_PA_SELECT_CATEGORY_SMA_CONG: return "SMA Congestion";
+	case STL_PA_SELECT_CATEGORY_BUBBLE:   return "Bubble";
+	case STL_PA_SELECT_CATEGORY_SEC:      return "Security Errors";
+	case STL_PA_SELECT_CATEGORY_ROUT:     return "Routing Errors";
+	case STL_PA_SELECT_CATEGORY_VF_CONG:  return "VF Congestion";
+	case STL_PA_SELECT_CATEGORY_VF_BUBBLE:return "VF Bubble";
+	default:                              return "Unknown";
+	}
+}
+
+static __inline
+const char* StlComparatorToText(uint8 comparator)
+{
+	switch (comparator) {
+	case FOCUS_PORTS_COMPARATOR_GREATER_THAN:          return "greater than";
+	case FOCUS_PORTS_COMPARATOR_LESS_THAN:             return "less than";
+	case FOCUS_PORTS_COMPARATOR_GREATER_THAN_OR_EQUAL: return "greater than or equal to";
+	case FOCUS_PORTS_COMPARATOR_LESS_THAN_OR_EQUAL:    return "less than or equal to";
+	case FOCUS_PORTS_COMPARATOR_INVALID:
+	default:                                           return "invalid";
+	}
+}
+
+static __inline
+const char* StlOperatorToText(uint8 logical_operator)
+{
+	switch (logical_operator) {
+	case FOCUS_PORTS_LOGICAL_OPERATOR_AND:     return "AND";
+	case FOCUS_PORTS_LOGICAL_OPERATOR_OR:      return "OR";
+	case FOCUS_PORTS_LOGICAL_OPERATOR_INVALID:
+	default:                                   return "invalid";
+	}
+}
+
 typedef struct _STL_FOCUS_PORTS_RSP {
 	STL_PA_IMAGE_ID_DATA	imageId;
-	uint32					nodeLid;
+	STL_LID					nodeLid;
 	uint8					portNumber;
 	uint8					rate;	// IB_STATIC_RATE - 5 bit value
 	uint8					maxVlMtu;	// enum IB_MTU - 4 bit value
@@ -372,7 +553,7 @@ typedef struct _STL_FOCUS_PORTS_RSP {
 	uint64					value;		// list sorting factor
 	uint64					nodeGUID;
 	char					nodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
-	uint32					neighborLid;
+	STL_LID					neighborLid;
 	uint8					neighborPortNumber;
 	uint8					reserved3[3];
 	uint64					neighborValue;
@@ -380,8 +561,27 @@ typedef struct _STL_FOCUS_PORTS_RSP {
 	char					neighborNodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
 } PACK_SUFFIX STL_FOCUS_PORTS_RSP;
 
+typedef struct _STL_FOCUS_PORTS_MULTISELECT_RSP {
+	STL_PA_IMAGE_ID_DATA	imageId;
+	STL_LID					nodeLid;
+	uint8					portNumber;
+	uint8					rate;	// IB_STATIC_RATE - 5 bit value
+	uint8					maxVlMtu;	// enum IB_MTU - 4 bit value
+	IB_BITFIELD2(uint8,	localStatus : 4,
+				neighborStatus : 4)
+	uint64					value[MAX_NUM_FOCUS_PORT_TUPLES];
+	uint64					nodeGUID;
+	char					nodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
+	STL_LID					neighborLid;
+	uint8					neighborPortNumber;
+	uint8					reserved3[3];
+	uint64					neighborValue[MAX_NUM_FOCUS_PORT_TUPLES];
+	uint64					neighborGuid;
+	char					neighborNodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
+} PACK_SUFFIX STL_FOCUS_PORTS_MULTISELECT_RSP;
+
 typedef struct _STL_SMINFO_DATA {
-	STL_LID_32				lid;
+	STL_LID					lid;
 	IB_BITFIELD2(uint8,
 		priority : 4,
 		state : 4)
@@ -439,13 +639,13 @@ typedef struct _STL_PA_VF_Cfg_Rsp {
 	STL_PA_IMAGE_ID_DATA	imageId;
 	uint64					nodeGUID;
 	char					nodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
-	uint32					nodeLid;
+	STL_LID					nodeLid;
 	uint8					portNumber;
 	uint8					reserved[3];
 } PACK_SUFFIX STL_PA_VF_CFG_RSP;
 
 typedef struct _STL_PA_VF_PORT_COUNTERS_DATA {
-	uint32				nodeLid;
+	STL_LID				nodeLid;
 	uint8				portNumber;
 	uint8				reserved[3];
 	uint32				flags;
@@ -492,7 +692,7 @@ typedef union {
 } STLVlCounterSelectMask;
 
 typedef struct _STL_PA_CLEAR_VF_PORT_COUNTERS_DATA {
-	uint32		nodeLid;
+	STL_LID		nodeLid;
 	uint8		portNumber;
 	uint8		reserved[3];
 	uint64		reserved4;
@@ -513,7 +713,7 @@ typedef struct _STL_PA_VF_FOCUS_PORTS_REQ {
 
 typedef struct _STL_PA_VF_FOCUS_PORTS_RSP {
 	STL_PA_IMAGE_ID_DATA	imageId;
-	uint32					nodeLid;
+	STL_LID					nodeLid;
 	uint8					portNumber;
 	uint8					rate;	// IB_STATIC_RATE - 5 bit value
 	uint8					maxVlMtu;	// enum IB_MTU - 4 bit value
@@ -522,13 +722,70 @@ typedef struct _STL_PA_VF_FOCUS_PORTS_RSP {
 	uint64					value;		// list sorting factor
 	uint64					nodeGUID;
 	char					nodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
-	uint32					neighborLid;
+	STL_LID					neighborLid;
 	uint8					neighborPortNumber;
 	uint8					reserved3[3];
 	uint64					neighborValue;
 	uint64					neighborGuid;
 	char					neighborNodeDesc[STL_PM_NODEDESCLEN]; // \0 terminated.
 } PACK_SUFFIX STL_PA_VF_FOCUS_PORTS_RSP;
+
+typedef struct _STL_PA_Group_NodeInfo_Req {
+	char groupName[STL_PM_GROUPNAMELEN];
+	STL_PA_IMAGE_ID_DATA imageId;
+	uint64 nodeGUID;
+	char nodeDesc[STL_PM_NODEDESCLEN];
+	uint32 nodeLID;
+	uint32 reserved;
+} PACK_SUFFIX STL_PA_GROUP_NODEINFO_REQ;
+
+typedef struct _STL_PA_Group_NodeInfo_Rsp {
+	STL_PA_IMAGE_ID_DATA imageId;
+	uint64 nodeGUID;
+	char nodeDesc[STL_PM_NODEDESCLEN];
+	uint32 nodeLID;
+	uint8 nodeType;
+	uint8 reserved[3];
+	uint64 portSelectMask[4];
+} PACK_SUFFIX STL_PA_GROUP_NODEINFO_RSP;
+
+typedef struct _STL_PA_Group_LinkInfo_Req {
+	STL_PA_IMAGE_ID_DATA imageId;
+	char groupName[STL_PM_GROUPNAMELEN];
+	uint32 lid;
+	uint8 port;
+	uint8 reserved[3];
+} PACK_SUFFIX STL_PA_GROUP_LINKINFO_REQ;
+
+typedef struct _STL_PA_Group_LinkInfo_Rsp {
+	STL_PA_IMAGE_ID_DATA imageId;
+	uint32 fromLID;
+	uint32 toLID;
+	uint8 fromPort;
+	uint8 toPort;
+	IB_BITFIELD2( uint8,
+		mtu:4,
+		activeSpeed:4)
+	IB_BITFIELD2( uint8,
+		txLinkWidthDowngradeActive:4,
+		rxLinkWidthDowngradeActive:4)
+	IB_BITFIELD2(uint8,
+		localStatus : 4,
+		neighborStatus : 4)
+	uint8 reserved[3];
+} PACK_SUFFIX STL_PA_GROUP_LINKINFO_RSP;
+
+
+typedef struct _STL_PA_GRP_LIST2 {
+	char                 groupName[STL_PM_GROUPNAMELEN]; // \0 terminated
+	STL_PA_IMAGE_ID_DATA imageId;
+} PACK_SUFFIX STL_PA_GROUP_LIST2;
+
+typedef struct _STL_PA_VF_LIST2 {
+	char                 vfName[STL_PM_VFNAMELEN]; // \0 terminated
+	STL_PA_IMAGE_ID_DATA imageId;
+} PACK_SUFFIX STL_PA_VF_LIST2;
+
 
 /* End of packed data structures */
 #include "iba/public/ipackoff.h"
@@ -541,26 +798,31 @@ typedef struct _STL_PA_VF_FOCUS_PORTS_RSP {
 #define STL_PA_CMD_GETTABLE_RESP      (0x92)
 
 /* Performance Analysis attribute IDs */
-#define STL_PA_ATTRID_GET_CLASSPORTINFO	 0x01
-#define STL_PA_ATTRID_GET_GRP_LIST		 0xA0
-#define STL_PA_ATTRID_GET_GRP_INFO		 0xA1
-#define STL_PA_ATTRID_GET_GRP_CFG		 0xA2
-#define STL_PA_ATTRID_GET_PORT_CTRS		 0xA3
-#define STL_PA_ATTRID_CLR_PORT_CTRS		 0xA4
-#define STL_PA_ATTRID_CLR_ALL_PORT_CTRS	 0xA5
-#define STL_PA_ATTRID_GET_PM_CONFIG		 0xA6
-#define STL_PA_ATTRID_FREEZE_IMAGE		 0xA7
-#define STL_PA_ATTRID_RELEASE_IMAGE		 0xA8
-#define STL_PA_ATTRID_RENEW_IMAGE		 0xA9
-#define STL_PA_ATTRID_GET_FOCUS_PORTS	 0xAA
-#define STL_PA_ATTRID_GET_IMAGE_INFO	 0xAB
-#define STL_PA_ATTRID_MOVE_FREEZE_FRAME	 0xAC
-#define STL_PA_ATTRID_GET_VF_LIST      	 0xAD
-#define STL_PA_ATTRID_GET_VF_INFO      	 0xAE
-#define STL_PA_ATTRID_GET_VF_CONFIG    	 0xAF
-#define STL_PA_ATTRID_GET_VF_PORT_CTRS 	 0xB0
-#define STL_PA_ATTRID_CLR_VF_PORT_CTRS 	 0xB1
+#define STL_PA_ATTRID_GET_CLASSPORTINFO  0x01
+#define STL_PA_ATTRID_GET_GRP_LIST       0xA0
+#define STL_PA_ATTRID_GET_GRP_INFO       0xA1
+#define STL_PA_ATTRID_GET_GRP_CFG        0xA2
+#define STL_PA_ATTRID_GET_PORT_CTRS      0xA3
+#define STL_PA_ATTRID_CLR_PORT_CTRS      0xA4
+#define STL_PA_ATTRID_CLR_ALL_PORT_CTRS  0xA5
+#define STL_PA_ATTRID_GET_PM_CONFIG      0xA6
+#define STL_PA_ATTRID_FREEZE_IMAGE       0xA7
+#define STL_PA_ATTRID_RELEASE_IMAGE      0xA8
+#define STL_PA_ATTRID_RENEW_IMAGE        0xA9
+#define STL_PA_ATTRID_GET_FOCUS_PORTS    0xAA
+#define STL_PA_ATTRID_GET_IMAGE_INFO     0xAB
+#define STL_PA_ATTRID_MOVE_FREEZE_FRAME  0xAC
+#define STL_PA_ATTRID_GET_VF_LIST        0xAD
+#define STL_PA_ATTRID_GET_VF_INFO        0xAE
+#define STL_PA_ATTRID_GET_VF_CONFIG      0xAF
+#define STL_PA_ATTRID_GET_VF_PORT_CTRS   0xB0
+#define STL_PA_ATTRID_CLR_VF_PORT_CTRS   0xB1
 #define STL_PA_ATTRID_GET_VF_FOCUS_PORTS 0xB2
+#define STL_PA_ATTRID_GET_FOCUS_PORTS_MULTISELECT 0xB4
+#define STL_PA_ATTRID_GET_GRP_NODE_INFO  0xB5
+#define STL_PA_ATTRID_GET_GRP_LINK_INFO  0xB6
+#define STL_PA_ATTRID_GET_GRP_LIST2      0xB7
+#define STL_PA_ATTRID_GET_VF_LIST2       0xB8
 
 /* Performance Analysis MAD status values */
 #define STL_MAD_STATUS_STL_PA_UNAVAILABLE	0x0A00  // Engine unavailable
@@ -569,6 +831,8 @@ typedef struct _STL_PA_VF_FOCUS_PORTS_RSP {
 #define STL_MAD_STATUS_STL_PA_NO_VF			0x0D00  // VF not found
 #define STL_MAD_STATUS_STL_PA_INVALID_PARAMETER	0x0E00  // Invalid parameter
 #define STL_MAD_STATUS_STL_PA_NO_IMAGE		0x0F00  // Image not found
+#define STL_MAD_STATUS_STL_PA_NO_DATA		0x1000  // No Data when port was not queried
+#define STL_MAD_STATUS_STL_PA_BAD_DATA		0x1100  // Bad Data when query was unsuccessful
 
 /* PM Service Record values */
 #define STL_PM_SERVICE_NAME     "Primary Intel OmniPath Performance Manager"
@@ -583,60 +847,7 @@ typedef struct _STL_PA_VF_FOCUS_PORTS_RSP {
 
 #define STL_PA_CLASS_VERSION	0x80
 
-static __inline void
-StlPaClassPortInfoCapMask(char buf[80], uint16 cmask)
-{
-	if (!cmask) {
-		snprintf(buf, 80, "-");
-	} else {
-		snprintf(buf, 80, "%s%s%s%s",
-			(cmask & STL_CLASS_PORT_CAPMASK_TRAP) ? "Trap " : "",
-			(cmask & STL_CLASS_PORT_CAPMASK_NOTICE) ? "Notice " : "",
-			(cmask & STL_CLASS_PORT_CAPMASK_CM2) ? "CapMask2 " : "",
-			/* Class Specific */
-			(cmask & STL_PA_CPI_CAPMASK_ABSTIMEQUERY) ? "AbsTime " : "");
-	}
-}
 
-static __inline void
-StlPaClassPortInfoCapMask2(char buf[80], uint32 cmask)
-{
-	if (!cmask) {
-		snprintf(buf, 80, "-");
-	} else {
-		buf[0] = '\0';
-	}
-}
-
-static __inline
-void StlFormatPmFlags(char buf[80], uint32 pmFlags)
-{
-	snprintf(buf, 80, "%s=%s %s=%s %s=%s %s=%s",
-			"ProcessHFICntrs", pmFlags & STL_PM_PROCESS_HFI_COUNTERS ? "On" : "Off",
-			"ProcessVLCntrs",  pmFlags & STL_PM_PROCESS_VL_COUNTERS ? "On" : "Off",
-			"ClrDataCntrs",    pmFlags & STL_PM_PROCESS_CLR_DATA_COUNTERS ? "On" : "Off",
-			"Clr64bitErrCntrs", pmFlags & STL_PM_PROCESS_CLR_64BIT_COUNTERS ? "On" : "Off");
-}
-
-static __inline
-void StlFormatPmFlags2(char buf[80], uint32 pmFlags)
-{
-	snprintf(buf, 80, "%s=%s %s=%s",
-			"Clr32bitErrCntrs", pmFlags & STL_PM_PROCESS_CLR_32BIT_COUNTERS ? "On" : "Off",
-			"Clr8bitErrCntrs",  pmFlags & STL_PM_PROCESS_CLR_8BIT_COUNTERS ? "On" : "Off");
-}
-
-static __inline
-const char* StlFocusStatusToText(uint8 status)
-{
-	switch (status) {
-	case STL_PA_FOCUS_STATUS_OK:           return "OK";
-	case STL_PA_FOCUS_STATUS_PMA_IGNORE:   return "PMA Ignore";
-	case STL_PA_FOCUS_STATUS_PMA_FAILURE:  return "PMA Failure";
-	case STL_PA_FOCUS_STATUS_TOPO_FAILURE: return "Topo Failure";
-	default:                               return "Unknown";
-	}
-}
 
 /* LinkQualityIndicator values */
 #define STL_LINKQUALITY_EXCELLENT	5	/* working as intended */

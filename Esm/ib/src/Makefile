@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2018, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -50,10 +50,17 @@ else
 DIRS			= ibaccess linux
 endif
 # config must be after vxworks, it needs xml.h created by vxworks
-DIRS			+= mai cs if3 pm smi config fe
+DIRS			+= mai cs if3 pm smi config fe em eepha eeph eeph_mux
+ifeq "$(BUILD_TARGET_OS)" "VXWORKS"
+ # C files (.c)
+ #  CFILES                 = \
+ #                                  # Add more c files here
+else
 # C files (.c)
-CFILES			= \
-				# Add more c files here
+CFILES                 = smi/sm/sm_linux_proc.c \
+                               # Add more c files here
+endif
+
 # C++ files (.cpp)
 CCFILES			= \
 				# Add more cpp files here
@@ -118,17 +125,21 @@ INCLUDE_SUBDIR		=
 #LOCALDEPLIBS	= User libraries to include in dependencies [Empty]
 #LOCALLIBS		= User libraries to use when linking [Empty]
 #				(in addition to LOCALDEPLIBS)
-#LOCAL_LIB_DIRS	= User library directories for libpaths [Empty]
+LOCAL_LIB_DIRS	= /usr/lib64
 #KlockWorks expect 'C" code option for embedded
 ifeq ($(BUILD_TARGET_OS),VXWORKS)
 CLOCAL = $(CPIE) -xc
 else
 CLOCAL = $(CPIE)
 endif
-LOCALDEPLIBS = sm sa pm fe if3sa if3 cs mai ibaccess config rem_conf net public vslogu Xml opamgt-priv Topology IbPrint
+LOCALDEPLIBS = sm sa pm pa em fe if3sa if3 cs mai ibaccess config rem_conf net public vslogu Xml opamgt-priv Topology IbPrint
 # FIXME - need to build zlib so can use well defined version?
 LOCALLIBS=rt $(OPENIB_USER_LIBS) z ssl crypto
-LOCAL_INCLUDE_DIRS = $(TL_DIR)/Topology $(TL_DIR)/IbPrint
+LOCAL_INCLUDE_DIRS = $(TL_DIR)/Topology \
+                     $(TL_DIR)/IbPrint \
+                     $(MOD_DIR)/src/smi/include \
+                     $(MOD_DIR)/src/pm/include
+LDLOCAL = -fopenmp
 
 ifneq "$(BUILD_TARGET_OS)" "VXWORKS"
 LOCALLIBS+= expat CodeVersion

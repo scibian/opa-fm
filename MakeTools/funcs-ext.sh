@@ -1,7 +1,7 @@
 #!/bin/bash -v
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -352,7 +352,10 @@ function showenv()
     if [[ "$RELEASE_TAG" == "" || "$1" == "-h" ]]; then
         local RELEASE_TAG_COMMENT="[use: export RELEASE_TAG=R#] "
     fi    	
-    
+    if [[ "$OPA_FEATURE_SET" == "" || "$1" == "-h" ]]; then
+        local OPA_FEATURE_SET_COMMENT="[use: setfs] "
+    fi
+
     echo "Build Target       : $TARGET_COMMENT$BUILD_TARGET"
     echo "Build Target OS    : $TARGET_COMMENT$OS_COMMENT$BUILD_TARGET_OS_VENDOR $BUILD_TARGET_OS $BUILD_TARGET_OS_VERSION $SMP"
     echo "Build Platform     : $TARGET_COMMENT$BUILD_PLATFORM_OS_VENDOR $BUILD_PLATFORM"
@@ -360,6 +363,7 @@ function showenv()
     echo "Build Unit Test    : $UNIT_TEST_COMMENT$BUILD_UNIT_TEST"
     echo "Build Configuration: $CONFIG_COMMENT$BUILD_CONFIG"
     echo "Release Tag        : $RELEASE_TAG_COMMENT$RELEASE_TAG"
+    echo "Build Feature Set  : $OPA_FEATURE_SET_COMMENT$OPA_FEATURE_SET"
     
     if [ "$BUILD_TARGET_OS" == "VXWORKS" ]; then
         if [[ "$BUILD_TMS" == "" || "$1" == "-h" ]]; then
@@ -705,7 +709,27 @@ function settarget()
 #---------------------------------------------------------------------------
 function os_vendor()
 {
-    if [ `uname -s` == "Darwin" ]
+    if [ -f /etc/os-release ]
+    then
+        id=$(grep ^ID= /etc/os-release | cut -f2 -d= | cut -f2 -d\")
+        case $id in
+            rhel)
+                rval=redhat
+                ;;
+            sles)
+                rval=SuSE
+                ;;
+            centos)
+                rval=redhat
+                ;;
+            fedora)
+                rval=redhat
+                ;;
+            *)
+                rval=""
+                ;;
+        esac
+    elif [ `uname -s` == "Darwin" ]
     then
         # Apple Mac
         rval=apple
@@ -713,26 +737,26 @@ function os_vendor()
         filelist=($('ls' /etc/*-release | egrep -v lsb | egrep -v os))
         rval=""
         if [ ${#filelist[@]} -eq 0 ] && [ -f /etc/lsb-release ]; then
-            rval=$(cat /etc/lsb-release | egrep DISTRIB_ID | cut -d'=' -f2)
+            rval=$(cat /etc/lsb-release | egrep DISTRIB_ID | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')
         fi
         for file in $filelist
         do
 	    if [ -f $file ]
 	    then
-		    rval=$(basename $file -release)
-		    if [ $rval = 'SuSE' ]
-		    then
-			    if [ -f /etc/UnitedLinux-release ]
-			    then
-				    rval=UnitedLinux
-			    fi
-			elif [ $rval = 'centos' ]
+		rval=$(basename $file -release)
+		if [ $rval = 'SuSE' ]
+		then
+			if [ -f /etc/UnitedLinux-release ]
 			then
-				rval=redhat
-			elif [ $rval != 'os' ]
-			then
-				break
-		    fi
+				rval=UnitedLinux
+			fi
+		elif [ $rval = 'centos' ]
+		then
+			rval=redhat
+		elif [ $rval != 'os' ]
+		then
+			break
+		fi
 	    fi
         done
     fi
@@ -754,11 +778,11 @@ function os_vendor_version()
 		# - use VERSION_ID - it has a common format among distros 
 		# - mimic old way and drop $minor if eq 0 (see redhat handling below)
 		# - drop '.'(dot)
-        if [ $1 = "Ubuntu" ]; then
-            rval=$(echo $VERSION_ID | sed -e 's/\.[0]//' -e 's/\.//')
-        else
-		    rval=ES$(echo $VERSION_ID | sed -e 's/\.[0]//' -e 's/\.//')
-        fi
+		if [ $1 = "ubuntu" ]; then
+			rval=ES$(echo $VERSION_ID | sed -e 's/\.//')
+		else
+			rval=ES$(echo $VERSION_ID | sed -e 's/\.[0]//' -e 's/\.//')
+        	fi
 		echo $rval
 		return
 	fi
@@ -873,7 +897,7 @@ function target()
     local message
 
     # always set top level directoy
-    settl        
+    settl
     
     export BUILD_PLATFORM_OS_VENDOR=`os_vendor`    
     export BUILD_PLATFORM_OS_VENDOR_VERSION=`os_vendor_version $BUILD_PLATFORM_OS_VENDOR`    
@@ -1074,6 +1098,12 @@ function target()
         	export BUILD_CONFIG=`cat $TL_DIR/.defaultBuildConfig 2>&1 /dev/null`
         	echo "Build Configuration is ${BUILD_CONFIG:-empty.}"
     	fi        
+
+    	if [[ -e "$TL_DIR/.defaultFS" ]]; then
+        	export OPA_FEATURE_SET=`cat $TL_DIR/.defaultFS 2>&1 /dev/null`
+        	echo "OPA_FEATURE_SET is ${OPA_FEATURE_SET:-empty.}"
+    	fi
+
     fi       
     
 } # end function

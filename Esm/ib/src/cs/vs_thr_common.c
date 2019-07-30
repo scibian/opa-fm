@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -100,6 +100,9 @@ impl_vs_thread_sleep (uint64_t sleep_time);
 extern Status_t
 impl_vs_thread_join(Thread_t *thr,
                           void **value_ptr);
+
+extern int 
+impl_vs_thread_setname(char *name);
 
 /**********************************************************************
 *
@@ -594,4 +597,22 @@ vs_thread_join (Thread_t *handle, void **value_ptr)
 
     IB_EXIT (function, status);
     return status;
+}
+/**********************************************************************
+*
+* FUNCTION
+*    vs_thread_name_str
+*
+* DESCRIPTION
+*    Sets a globally unique thread name string for
+*    the currently executing thread.
+*
+* INPUTS
+*    thread name string  
+* OUTPUTS
+* Upon success returns 0   
+**********************************************************************/
+int vs_thread_setname(char* name)
+{
+	return impl_vs_thread_setname(name);
 }

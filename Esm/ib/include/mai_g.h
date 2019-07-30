@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT2 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -115,8 +115,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * destination addressing for a MAD packet.
  */
 typedef struct _MaiAddrInfo_t {
-	uint16_t	slid;		// source LID (16)
-	uint16_t	dlid;		// destination LID (16)
+	STL_LID		slid;		// source LID (32)
+	STL_LID		dlid;		// destination LID (32)
 	uint8_t		sl;		    // service level (4)
 	uint16_t	pkey;		// partition key (16)
 	uint32_t	srcqp;	    // WQP number at the source (24)
@@ -200,6 +200,28 @@ typedef struct _Mai_t
   /* DO NOT PLACE ANY FIELDS BELOW data */
   } Mai_t;
 
+
+static __inline uint8_t* stl_mai_get_smp_data(Mai_t *maip)
+{
+	if (maip->base.mclass == MCLASS_SM_DIRECTED_ROUTE) {
+		return ((DRStlSmp_t *)maip->data)->SMPData;
+	}
+	return ((LRStlSmp_t *)maip->data)->SMPData;
+}
+static __inline size_t stl_mai_get_smp_data_offset(Mai_t *maip)
+{
+	if (maip->base.mclass == MCLASS_SM_DIRECTED_ROUTE) {
+		return offsetof(DRStlSmp_t, SMPData);
+	}
+	return offsetof(LRStlSmp_t, SMPData);
+}
+static __inline uint64_t* stl_mai_get_mkey(Mai_t *maip)
+{
+	if (maip->base.mclass == MCLASS_SM_DIRECTED_ROUTE) {
+		return &(((DRStlSmp_t *)maip->data)->M_Key);
+	}
+	return &(((LRStlSmp_t *)maip->data)->M_Key);
+}
 
 /* Function for filter callback */
 typedef int (mai_filter_check_packet_t)(Mai_t * data);

@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT7 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -38,7 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // adds a port to a group. used by PmAddExtPort and PmAddIntPort
 void PmAddPortToGroupIndex(PmPortImage_t * portImage, uint32 grpIndex,
-			   					PmGroup_t *groupp, boolean internal)
+	PmGroup_t *groupp, boolean internal)
 {
 	portImage->Groups[grpIndex] = groupp;
 	if (internal)
@@ -50,7 +50,7 @@ void PmAddPortToGroupIndex(PmPortImage_t * portImage, uint32 grpIndex,
 
 // removes a port from a group. used by other higher level routines
 void PmRemovePortFromGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
-			   						PmGroup_t *groupp, uint8 compress)
+	PmGroup_t *groupp, uint8 compress)
 {
 	if (PM_COMPRESS_GROUPS && compress) {
 		// compress rest of list
@@ -77,7 +77,8 @@ void PmRemovePortFromGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
 	}
 }
 
-static boolean PmIsPortImageInGroup(PmPortImage_t *portImage, PmGroup_t *groupp, boolean *isInternal)
+static boolean PmIsPortImageInGroup(PmPortImage_t *portImage, PmGroup_t *groupp,
+	boolean *isInternal)
 {
     uint32 i;
     boolean isInGroup = FALSE;
@@ -97,48 +98,33 @@ static boolean PmIsPortImageInGroup(PmPortImage_t *portImage, PmGroup_t *groupp,
     return isInGroup;
 }
 
-boolean PmIsPortInGroup(Pm_t *pm, PmPort_t *pmportp, PmPortImage_t *portImage,
-    PmGroup_t *groupp, boolean sth, boolean *isInternal)
+boolean PmIsPortInGroup(PmImage_t *pmimagep, PmPortImage_t *portImage,
+	int groupIndex, boolean isAllGroup, boolean *isInternal)
 {
-    // for non-Switch ports and switch port 0, active will be true
-    // but for other switch ports could be not active
-    // ports without a PMA are not tabulated
-    if (pmportp->u.s.PmaAvoid || !portImage->u.s.active)
-        return FALSE;
-    if (!sth) {
-        return ((groupp == pm->AllPorts)
-            || PmIsPortImageInGroup(portImage, groupp, isInternal));
-    } else {
-        return ((groupp == pm->ShortTermHistory.LoadedImage.AllGroup)
-            || PmIsPortImageInGroup(portImage, groupp, isInternal));
-    }
+	if (!portImage->u.s.active) return FALSE;
+	if (isAllGroup) {
+		if (isInternal) *isInternal = TRUE;
+		return TRUE;
+	}
+	if (groupIndex == -1 || groupIndex > pmimagep->NumGroups ||
+		groupIndex >= PM_MAX_GROUPS) return FALSE;
+
+	return PmIsPortImageInGroup(portImage, &pmimagep->Groups[groupIndex], isInternal);
 }
 
 // adds a port to a group where the neighbor of the port WILL NOT be in
 // the given group
 void PmAddExtPortToGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
-			   						PmGroup_t *groupp, uint32 imageIndex)
+	PmGroup_t *groupp, uint32 imageIndex)
 {
-#if DEBUG && 0	// TBD - enable this
-	// make sure neighbor is not in the group
-	{
-		PmTopologyPort_t *neighbor = portImage->neighbor->Image[imageIndex];
-		if (neighbor) {
-			DEBUG_ASSERT(! PmIsPortInGroup(&neighbor->Image[imageIndex], groupp));
-		}
-	}
-#endif
 	PmAddPortToGroupIndex(portImage, grpIndex, groupp, FALSE);
-	groupp->Image[imageIndex].NumExtPorts++;
 }
 
 // removes a port from a group. used by other higher level routines
 void PmRemoveExtPortFromGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
-			   						PmGroup_t *groupp, uint32 imageIndex,
-									uint8 compress)
+	PmGroup_t *groupp, uint32 imageIndex, uint8 compress)
 {
 	PmRemovePortFromGroupIndex(portImage, grpIndex, groupp, compress);
-	groupp->Image[imageIndex].NumExtPorts--;
 }
 
 
@@ -146,65 +132,15 @@ void PmRemoveExtPortFromGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
 // the given group
 // This DOES NOT add the neighbor.  Caller must do that separately.
 void PmAddIntPortToGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
-			   						PmGroup_t *groupp, uint32 imageIndex)
+	PmGroup_t *groupp, uint32 imageIndex)
 {
 	PmAddPortToGroupIndex(portImage, grpIndex, groupp, TRUE);
-	groupp->Image[imageIndex].NumIntPorts++;
 }
-
 
 // removes a port from a group. used by other higher level routines
 void PmRemoveIntPortFromGroupIndex(PmPortImage_t *portImage, uint32 grpIndex,
-			   							PmGroup_t *groupp, uint32 imageIndex,
-										uint8 compress)
+	PmGroup_t *groupp, uint32 imageIndex, uint8 compress)
 {
 	PmRemovePortFromGroupIndex(portImage, grpIndex, groupp, compress);
-	groupp->Image[imageIndex].NumIntPorts--;
 }
 
-
-#if 0 // not yet used
-// adds both sides of a link to a group
-// This also adds the neighbor (note SW Port 0 has no neighbor).
-FSTATUS PmAddLinkToGroup(PmPortImage_t *portImage, PmPortImage_t *portImage2,
-								PmGroup_t *groupp, uint32 imageIndex)
-{
-	FSTATUS status;
-
-	status = PmAddIntPortToGroup(portImage, groupp, imageIndex);
-	if (FSUCCESS != status)
-		return status;
-	if (portImage2) {
-		status = PmAddIntPortToGroup(portImage2, groupp, imageIndex);
-		if (FSUCCESS != status) {
-			(void)PmRemovePortFromGroup(portImage, groupp, 0);	// no compress, at end
-			return status;
-		}
-		groupp->Image[imageIndex].NumIntPorts++;
-	}
-	groupp->Image[imageIndex].NumIntPorts++;
-	return status;
-}
-
-// removes both sides of a link from a group
-// This also removes the neighbor (note SW Port 0 has no neighbor).
-FSTATUS PmRemoveLinkFromGroup(PmPortImage_t *portImage,
-			   	PmPortImage_t *portImage2, PmGroup_t *groupp, uint32 imageIndex)
-{
-	FSTATUS status;
-
-	status = PmRemovePortFromGroup(portImage, groupp, PM_COMPRESS_GROUPS);
-	if (FSUCCESS != status)
-		return status;
-	if (portImage2) {
-		status = PmRemovePortFromGroup(portImage2, groupp, PM_COMPRESS_GROUPS);
-		if (FSUCCESS != status) {
-			(void)PmAddPortToGroup(portImage, groupp, TRUE);
-			return status;
-		}
-		groupp->Image[imageIndex].NumIntPorts--;
-	}
-	groupp->Image[imageIndex].NumIntPorts--;
-	return status;
-}
-#endif // not yet used

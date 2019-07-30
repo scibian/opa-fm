@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT3 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -9,7 +9,7 @@ modification, are permitted provided that the following conditions are met:
       this list of conditions and the following disclaimer.
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
-     documentation and/or other materials provided with the distribution.
+      documentation and/or other materials provided with the distribution.
     * Neither the name of Intel Corporation nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
@@ -47,6 +47,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "iba/public/datatypes.h"
 #include "iba/public/ibyteswap_osd.h"
 
+#if defined(__LINUX__) && defined(_BSD_SOURCE)
+#include <endian.h>
+#elif defined(VXWORKS)
+#include <../src/hwif/h/vxbus/vxbAccess.h>
+#endif
+
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -74,6 +81,13 @@ extern "C"
 	#endif
 	#define hton16				ntoh16
 #endif
+#ifndef le16toh
+	#if CPU_BE
+		#define le16toh( x )	( (((x) & 0x00FF) << 8) | (((x) & 0xFF00) >> 8) )
+	#else
+		#define le16toh
+	#endif
+#endif
 
 /* Default implementation of 32 bit swap function. */
 #ifndef ntoh32
@@ -86,6 +100,16 @@ extern "C"
 		#define ntoh32
 	#endif
 #define hton32				ntoh32
+#endif
+#ifndef le32toh
+	#if CPU_BE
+		#define le32toh( x ) ( (((x) & 0x000000FF) << 24) |	\
+								(((x) & 0x0000FF00) << 8) |	\
+								(((x) & 0x00FF0000) >> 8) |	\
+								(((x) & 0xFF000000) >> 24) )
+	#else
+		#define le32toh
+	#endif
 #endif
 
 /* Default implementation of 64 bit swap function. */
@@ -103,6 +127,20 @@ extern "C"
 		#define ntoh64
 	#endif
 #define hton64				ntoh64
+#endif
+#ifndef le64toh
+	#if CPU_BE
+		#define le64toh( x )	( (((x) & 0x00000000000000FF) << 56)  |		\
+								(((x) & 0x000000000000FF00) << 40)  |	\
+								(((x) & 0x0000000000FF0000) << 24)  |	\
+								(((x) & 0x00000000FF000000) << 8 )  |	\
+								(((x) & 0x000000FF00000000) >> 8 )  |	\
+								(((x) & 0x0000FF0000000000) >> 24)  |	\
+								(((x) & 0x00FF000000000000) >> 40)  |	\
+								(((x) & 0xFF00000000000000) >> 56) )
+	#else
+		#define le64toh
+	#endif
 #endif
 
 

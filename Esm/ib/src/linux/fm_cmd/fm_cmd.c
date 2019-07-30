@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -49,6 +49,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "hsm_config_client_data.h"
 #include "hsm_com_client_data.h"
 #include "cs_g.h"
+#include "ifs_g.h"
 
 extern int   getopt(int, char *const *, const char *);
 
@@ -102,7 +103,7 @@ static command_t commandList[] = {
 	{"smForceSweep", mgr_force_sweep, FM_MGR_SM, "Make the SM sweep now"},
 	{"smRestorePriority", sm_restore_priority, FM_MGR_SM, "Restore the normal priority of the SM (if it is\n                           currently elevated)"},
 	{"smShowCounters", sm_get_counters, FM_MGR_SM, "Get statistics and performance counters from the SM"},
-	{"smResetCounters",sm_reset_counters, FM_MGR_SM, "Reset SM statistics and performace counters"},
+	{"smResetCounters",sm_reset_counters, FM_MGR_SM, "Reset SM statistics and performance counters"},
 	{"smStateDump",sm_state_dump, FM_MGR_SM, "Dump Internal SM state into directory specified"},
 	{"smLogLevel", mgr_log_level, FM_MGR_SM, "Set the SM logging level (0=NONE+, 1=WARN+, 2=NOTICE+,\n                           3=INFO+, 4=VERBOSE+, 5=DEBUG2+, 6=DEBUG4+, 7=TRACE+)"},
 	{"smLogMode", mgr_log_mode, FM_MGR_SM, "Set the SM log mode flags (0/1 1=downgrade\n                           non-actionable, 0/2 2=logfile only)"},
@@ -112,7 +113,7 @@ static command_t commandList[] = {
 	{"saRmppDebug", mgr_rmpp_debug_toggle, FM_MGR_SM, "Toggle Rmpp debug output for SA"},
 	// these commands can be issued direct to PM without issue
 	{"pmShowCounters", pm_get_counters, FM_MGR_PM, "Get statistics and performance counters about the PM"},
-	{"pmResetCounters",pm_reset_counters, FM_MGR_PM, "Reset statistics and performace counters about the PM"},
+	{"pmResetCounters",pm_reset_counters, FM_MGR_PM, "Reset statistics and performance counters about the PM"},
 	{"pmDebug", mgr_debug_toggle, FM_MGR_PM, "Toggle debug output for PM"},
 	{"pmRmppDebug", mgr_rmpp_debug_toggle, FM_MGR_PM, "Toggle Rmpp debug output for PM"},
 	{"feLogLevel", mgr_log_level, FM_MGR_FE, "Set the FE logging level (0=NONE+, 1=WARN+, 2=NOTICE+,\n                           3=INFO+, 4=VERBOSE+, 5=DEBUG2+, 6=DEBUG4+, 7=TRACE+)"},
@@ -134,7 +135,7 @@ static command_t commandList[] = {
 	{"smLooptestShowTopology",sm_looptest_show_loop_topology, FM_MGR_SM, "Displays the topology for the SM Loop Test"},
 	{"smLooptestShowConfig",sm_looptest_show_config, FM_MGR_SM, "Displays the current active loop configuration"},
 	{"smForceRebalance", sm_force_rebalance_toggle, FM_MGR_SM, "Toggle Force Rebalance setting for SM"},
-	{"smAdaptiveRouting", sm_adaptive_routing, FM_MGR_SM, "Displays or modifies Adaptive Routing setting for SM.\n                           Display (no arg), Disable=0, Enable=1"},
+	{"smAdaptiveRouting", sm_adaptive_routing, FM_MGR_SM, "Displays or modifies Adaptive Routing settings\n                           (enable/disable, frequency, threshold) for SM.\n                           Display (no arg), Disable=0, Enable=1. Additional arguments\n                           can be used to update the frequency and threshold.\n                           -f (frequency, valid values are from 0 to 7)\n                           -t (threshold, valid values are from 0 to 7)\n                           If frequency or threshold are not provided, they will be reset to default."},
 	{"smForceAttributeRewrite", sm_force_attribute_rewrite, FM_MGR_SM, "Set rewriting of all attributes upon resweeping.\n                           Disable=0, Enable=1"},
 	{"smSkipAttrWrite", sm_skip_attr_write, FM_MGR_SM, "Bitmask of attributes to be skipped(not written) during\n                           sweeps (-help for list)"},
 	{"smPauseSweeps", sm_pause_sweeps, FM_MGR_SM, "Pause SM sweeps"},
@@ -154,9 +155,8 @@ void usage(char *cmd)
 	fprintf(stderr, " [options] cmd [args]\n\n");
 
 	fprintf(stderr, "options:\n");
-	fprintf(stderr, "  --help             - show this help text)\n");
-	fprintf(stderr, "  -i fm_instance     - FM instance to connect to (0 - default)\n\n");
-
+	fprintf(stderr, "  --help		- show this help text\n");
+	fprintf(stderr, "  -i fm_instance	- FM instance to connect to (0 - default)\n\n");
 	fprintf(stderr, "cmd:\n");
 	for(i=0;i<commandListLen;i++){
 		fprintf(stderr, "  %-21s %s\n",commandList[i].name,commandList[i].desc);
@@ -235,6 +235,12 @@ int sm_get_counters(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, char
 	return 0;
 }
 
+#define MAX_VESW 4095
+#define MIN_VESW 1
+#define ALL_VESW -1
+#define MIN_VESW_COUNT 1
+#define MAX_VESW_COUNT 20
+
 int pm_get_counters(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, char *argv[]) {
 	fm_mgr_config_errno_t	res;
 	fm_msg_ret_code_t		ret_code;
@@ -295,8 +301,7 @@ int sm_state_dump(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, char *
     char dirName[256];
 
 	if (argc == 1 && strlen(argv[0]) < 256) {
-		strncpy(dirName, argv[0], sizeof(dirName));
-		dirName[sizeof(dirName)-1]=0;
+		StringCopy(dirName, argv[0], sizeof(dirName));
 	} else {
 		sprintf(dirName, "/tmp");
 	}
@@ -474,13 +479,42 @@ int sm_force_rebalance_toggle(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int 
 }
 
 int sm_adaptive_routing(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, char *argv[]) {
-	fm_mgr_config_errno_t	res;
-	fm_msg_ret_code_t		ret_code;
-	uint32_t				enable=0;
+	fm_mgr_config_errno_t			res;
+	fm_msg_ret_code_t			ret_code;
+	fm_ar_config_t				ar_config;
 
-	if (argc == 1) {
-		enable = atol(argv[0]);
-		if((res = fm_mgr_simple_query(hdl, FM_ACT_GET, FM_DT_SM_SET_ADAPTIVE_ROUTING, mgr, sizeof(enable), (void*)&enable, &ret_code)) != FM_CONF_OK)
+	int					arg;
+	const char				* options="f:t:";
+
+	if (argc >= 1) {
+		ar_config.enable = atol(argv[0]);
+		if (ar_config.enable != 0 && ar_config.enable != 1) {
+			fprintf(stderr, "sm_adaptive_routing: Invalid argument %s. Valid values are 0 or 1.\n", argv[0]);
+			return 1;
+		}
+		ar_config.frequency = -1;
+		ar_config.threshold = -1;
+		optind = 1;  // reset the optind used by getopt to 1
+		while(-1 != (arg = getopt(argc, argv, options))) {
+			switch(arg) {
+				case 'f':
+					ar_config.frequency = atol(optarg);
+					if (AR_FREQUENCY_UPPER < ar_config.frequency) {
+						fprintf(stderr, "sm_adaptive_routing: Invalid argument for frequency %s. Valid values are from %d to %d.\n", optarg, AR_FREQUENCY_LOWER, AR_FREQUENCY_UPPER);
+						return 1;
+					}
+					break;
+				case 't':
+					ar_config.threshold = atol(optarg);
+					if (AR_THRESHOLD_UPPER < ar_config.threshold) {
+						fprintf(stderr, "sm_adaptive_routing: Invalid argument for threshold %s. Valid values are from %d to %d.\n", optarg, AR_THRESHOLD_LOWER, AR_THRESHOLD_UPPER);
+						return 1;
+					}
+					break;
+			}
+		}
+
+		if((res = fm_mgr_simple_query(hdl, FM_ACT_GET, FM_DT_SM_SET_ADAPTIVE_ROUTING, mgr, sizeof(ar_config), (void*)&ar_config, &ret_code)) != FM_CONF_OK)
 		{
 			fprintf(stderr, "sm_adaptive_routing: Failed to retrieve data: \n"
 		       	"\tError:(%d) %s \n\tRet code:(%d) %s\n",
@@ -491,14 +525,16 @@ int sm_adaptive_routing(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, 
     	}
 
 	} else if (argc == 0) {
-		if((res = fm_mgr_simple_query(hdl, FM_ACT_GET, FM_DT_SM_GET_ADAPTIVE_ROUTING, mgr, sizeof(enable), (void*)&enable, &ret_code)) != FM_CONF_OK)
+		if((res = fm_mgr_simple_query(hdl, FM_ACT_GET, FM_DT_SM_GET_ADAPTIVE_ROUTING, mgr, sizeof(ar_config), (void*)&ar_config, &ret_code)) != FM_CONF_OK)
 		{
 			fprintf(stderr, "sm_adaptive_routing: Failed to retrieve data: \n"
 		       	"\tError:(%d) %s \n\tRet code:(%d) %s\n",
 		       	res, fm_mgr_get_error_str(res),ret_code,
 		       	fm_mgr_get_resp_error_str(ret_code));
 		} else {
-			printf("SM Adaptive Routing is %s\n", enable ? "enabled" : "disabled");
+			printf("SM Adaptive Routing is %s\n", ar_config.enable ? "enabled" : "disabled");
+			printf("SM Adaptive Routing Frequency is %u\n", ar_config.frequency);
+			printf("SM Adaptive Routing Threshold is %u\n", ar_config.threshold);
 		}
 	}
 	return 0;
@@ -975,19 +1011,20 @@ int sm_skip_attr_write(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, c
 	}
 	if ((argc==0) || ((argc==1) && (strcmp(argv[0],"-help")==0)) ) {
 		printf(" SM SKIP WRITE BITMASKS...\n");
-		printf("   SM_SKIP_WRITE_PORTINFO   0x00000001  (Includes Port Info)\n");
-		printf("   SM_SKIP_WRITE_SMINFO     0x00000002  (Includes Sm Info)\n");
-		printf("   SM_SKIP_WRITE_GUID       0x00000004  (Includes GUID Info\n");
-		printf("   SM_SKIP_WRITE_SWITCHINFO 0x00000008  (Includes Switch Info\n");
-		printf("   SM_SKIP_WRITE_SWITCHLTV  0x00000010  (Includes Switch LTV)\n");
-		printf("   SM_SKIP_WRITE_VLARB      0x00000020  (Includes VLArb Tables/Preempt Tables)\n");
-		printf("   SM_SKIP_WRITE_MAPS       0x00000040  (Includes SL::SC, SC::SL, SC::VL)\n");
-		printf("   SM_SKIP_WRITE_LFT        0x00000080  (Includes LFT, MFT)\n");
-		printf("   SM_SKIP_WRITE_AR         0x00000100  (Includes PG table, PG FDB)\n");
-		printf("   SM_SKIP_WRITE_PKEY       0x00000200\n");
-		printf("   SM_SKIP_WRITE_CONG       0x00000400  (Includes HFI / Switch congestion)\n");
-		printf("   SM_SKIP_WRITE_BFRCTRL    0x00000800\n");
-		printf("   SM_SKIP_WRITE_NOTICE     0x00001000\n");
+		printf("   SM_SKIP_WRITE_PORTINFO        0x00000001  (Includes Port Info)\n");
+		printf("   SM_SKIP_WRITE_SMINFO          0x00000002  (Includes Sm Info)\n");
+		printf("   SM_SKIP_WRITE_GUID            0x00000004  (Includes GUID Info)\n");
+		printf("   SM_SKIP_WRITE_SWITCHINFO      0x00000008  (Includes Switch Info)\n");
+		printf("   SM_SKIP_WRITE_SWITCHLTV       0x00000010  (Includes Switch LTV)\n");
+		printf("   SM_SKIP_WRITE_VLARB           0x00000020  (Includes VLArb Tables/Preempt Tables)\n");
+		printf("   SM_SKIP_WRITE_MAPS            0x00000040  (Includes SL::SC, SC::SL, SC::VL)\n");
+		printf("   SM_SKIP_WRITE_LFT             0x00000080  (Includes LFT and MFT)\n");
+		printf("   SM_SKIP_WRITE_AR              0x00000100  (Includes PG table, PG FDB)\n");
+		printf("   SM_SKIP_WRITE_PKEY            0x00000200\n");
+		printf("   SM_SKIP_WRITE_CONG            0x00000400  (Includes HFI / Switch congestion)\n");
+		printf("   SM_SKIP_WRITE_BFRCTRL         0x00000800\n");
+		printf("   SM_SKIP_WRITE_NOTICE          0x00001000\n");
+		printf("   SM_SKIP_WRITE_PORTSTATEINFO   0x00002000  (Includes PortStateInfo sets for cascade activation)\n");
 		return  0;
 	}
 
@@ -1004,6 +1041,7 @@ int sm_skip_attr_write(p_fm_config_conx_hdlt hdl, fm_mgr_type_t mgr, int argc, c
 	return 0;
 }
 
+
 int main(int argc, char *argv[]) {
 	p_fm_config_conx_hdlt	hdl = NULL;
 	int						instance = 0;
@@ -1016,7 +1054,7 @@ int main(int argc, char *argv[]) {
 	int						i;
 
 	/* Get options at the command line (overide default values) */
-    cs_strlcpy(Opts, "+i:d:h-", sizeof(Opts));
+    StringCopy(Opts, "+i:d:h-", sizeof(Opts));
 
     while ((arg = getopt(argc, argv, Opts)) != EOF) {
         switch (arg) {

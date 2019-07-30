@@ -1,6 +1,6 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
 # 
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2017, Intel Corporation
 # 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -92,10 +92,22 @@ endif
 ifneq "$(VXWORKS_REV_6_9)" ""
 PRODUCT_DEFINES += -DVXWORKS_REV_6_9=$(VXWORKS_REV_6_9)
 endif
+ifeq "$(BUILD_OPAFISH)" "yes"
+PRODUCT_DEFINES += -DBUILD_OPAFISH
+endif
+ifeq "$(BUILD_CHASSISGUI2)" "yes"
+PRODUCT_DEFINES += -DBUILD_CHASSISGUI2
+endif
 
 # include buildFeatureDefs to let inplace build work for stream consistency
-PRODUCT_DEFINES += -include $(TL_DIR)/buildFeatureDefs
+PRODUCT_DEFINES += -include $(TL_DIR)/Fd/buildFeatureDefs
 
+ifeq "$(BIOS_UPDATE_ENABLED)" "yes"
+PRODUCT_DEFINES += -DBIOS_UPDATE_ENABLED
+endif
+ifeq "$(FWVERSION_CHECK_ENABLED)" "yes"
+PRODUCT_DEFINES += -DFWVERSION_CHECK_ENABLED
+endif
 ifneq "$(STL_GEN)" ""
 PRODUCT_DEFINES += -DSTL_GEN=$(STL_GEN)
 endif

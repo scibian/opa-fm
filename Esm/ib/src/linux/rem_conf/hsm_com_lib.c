@@ -1,6 +1,6 @@
 /* BEGIN_ICS_COPYRIGHT5 ****************************************
 
-Copyright (c) 2015, Intel Corporation
+Copyright (c) 2015-2017, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -59,7 +59,7 @@ int unix_serv_listen(char *name)
 	memset(&socketaddr,0,sizeof(socketaddr));
 
 	socketaddr.sun_family = AF_UNIX;
-	cs_strlcpy(socketaddr.sun_path,name, sizeof(socketaddr.sun_path));
+	StringCopy(socketaddr.sun_path,name, sizeof(socketaddr.sun_path));
 
 	len = SUN_LEN(&socketaddr);
 
@@ -620,7 +620,7 @@ unix_client_connect(const char *server_name, const char *client_name)
 	memset(&unix_addr,0,sizeof(unix_addr));
 
 	unix_addr.sun_family = AF_UNIX;
-	cs_strlcpy(unix_addr.sun_path,server_name, sizeof(unix_addr.sun_path));
+	StringCopy(unix_addr.sun_path,server_name, sizeof(unix_addr.sun_path));
 
 
 	len = SUN_LEN(&unix_addr);
