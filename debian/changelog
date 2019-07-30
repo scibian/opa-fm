@@ -1,4 +1,4 @@
-opa-fm (10.9.2.0-7-1ifs+deb9sci9+opa10.9u1) scibian9+opa10.9 ; urgency=medium
+opa-fm (10.9.2.0-7-1ifs+deb9sci9+opa10.9u1) scibian9+opa10.9; urgency=medium
 
   * New upstream version for opa10.9
 
