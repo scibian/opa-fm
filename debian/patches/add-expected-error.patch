@@ -1,0 +1,18 @@
+Description: Add expected error for an environment variable
+ In cowbuilder build environment, there is a GJS_DEBUG_TOPICS environment
+ variable which hold an ERROR string. This error string is catched by
+ MakeTools/check_results which does not find it in expected.err file and fails
+ thinking there is a real error. Add this line in expected error file to ignore
+ this environment variable content.
+Author: Rémi Palancher <remi-externe.palancher@edf.fr>
+Forwarded: no
+Last-Update: <2019-08-21>
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/Esm/expected.err
++++ b/Esm/expected.err
+@@ -1,3 +1,4 @@
+ U tmsTarget/src/tms/webif/webfiles.cmuX/html/cmu/chassis/esmcfgfiletransferfailed.html
+ U tmsTarget/src/tms/webif/webfiles.cmu9000/html/cmu/chassis/esmcfgfiletransferfailed.html
+ U target/tmsTarget/src/tms/webif/webfiles.STL2/html/cmu/chassis/esmcfgfiletransferfailed.html
++GJS_DEBUG_TOPICS=JS ERROR;JS LOG
