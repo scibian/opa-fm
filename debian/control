@@ -9,15 +9,15 @@ Vcs-Browser: https://github.com/scibian/opa-fm
 Build-Depends: debhelper (>= 9),
                dh-systemd,
                libexpat-dev,
-               libibmad-dev,
-               libibumad-dev (>=1.3.10),
-               libibverbs-dev,
-               libssl-dev,
+               libibumad-dev (>= 1.3.10.2),
+               libibverbs-dev (>= 1.1.2),
+               libssl-dev (>= 1.0.1),
                zlib1g-dev,
 
 Package: opa-fm
-Architecture: linux-any
-Depends: pciutils,
+Architecture: amd64
+Depends: libhfi1,
+         pciutils,
          systemd,
          ${misc:Depends},
          ${shlibs:Depends},
@@ -28,7 +28,7 @@ Description: Intel Omni-Path Fabric Management Software
  Fabric Executive, and some fabric management tools.
 
 Package: opa-fm-dbg
-Architecture: linux-any
+Architecture: amd64
 Section: debug
 Depends: opa-fm (=${binary:Version}),
          ${misc:Depends},
