@@ -29,14 +29,14 @@
 
 #[ICS VERSION STRING: unknown]
 Name: opa-fm
-Version: 10.9.2.0
-Release: 7%{?dist}
+Version: 10.9.3.1
+Release: 1%{?dist}
 %if 0%{?rhel}
 Epoch: 1
 %endif
 Summary: Intel Omni-Path Fabric Management Software
 
-License: GPLv2 or BSD
+License: BSD
 Url: https://github.com/intel/opa-fm
 # tarball created by:
 # git clone https://github.com/intel/opa-fm.git
@@ -48,7 +48,7 @@ ExclusiveArch: x86_64
 
 Requires: rdma
 
-BuildRequires: expat-devel, rdma-core-devel, openssl-devel
+BuildRequires: expat-devel, rdma-core-devel, zlib-devel, openssl-devel
 
 BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}
 Requires: systemd %{?systemd_requires}
@@ -58,7 +58,7 @@ Requires: libibumad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, o
 The %{name} contains Intel Omni-Path fabric management applications. This 
 includes: the Subnet Manager, Baseboard Manager, Performance Manager, 
 Fabric Executive, and some fabric management tools.
-IFSComponent: FM 10.9.2.0.7%{?dist}
+IFSComponent: FM 10.9.3.1.1%{?dist}
 
 %prep
 %setup -q -c

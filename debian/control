@@ -1,18 +1,15 @@
 Source: opa-fm
-Maintainer: Scibian Project <packaging@scibian.org>
+Maintainer: Brian T. Smith <bsmith@systemfabricworks.com>
 Section: net
 Priority: extra
 Standards-Version: 3.9.6
 Homepage: http://www.intel.com
-Vcs-Git: https://github.com/scibian/opa-fm.git
-Vcs-Browser: https://github.com/scibian/opa-fm
 Build-Depends: debhelper (>= 9),
                dh-systemd,
                libexpat-dev,
                libibumad-dev (>= 1.3.10.2),
                libibverbs-dev (>= 1.1.2),
                libssl-dev (>= 1.0.1),
-               python,
                zlib1g-dev,
 
 Package: opa-fm
