@@ -36,7 +36,7 @@ Epoch: 1
 %endif
 Summary: Intel Omni-Path Fabric Management Software
 
-License: GPLv2 or BSD
+License: BSD
 Url: https://github.com/intel/opa-fm
 # tarball created by:
 # git clone https://github.com/intel/opa-fm.git
