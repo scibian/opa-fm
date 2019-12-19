@@ -13,6 +13,7 @@ Build-Depends: debhelper (>= 10),
                libibverbs-dev (>= 1.1.2),
                libssl-dev (>= 1.0.1),
                zlib1g-dev,
+               python,
 
 Package: opa-fm
 Architecture: amd64
