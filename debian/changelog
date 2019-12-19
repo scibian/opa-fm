@@ -1,3 +1,9 @@
+opa-fm (10.9.3.1-1-1ifs+deb8sci8+opa10.9u2) scibian8+opa10.9; urgency=medium
+
+  * add python dep as build-dep for jenkins 
+
+ -- MHamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Thu, 19 Dec 2019 14:47:11 +0100
+
 opa-fm (10.9.3.1-1-1ifs+deb8sci8+opa10.9u1) scibian8+opa10.9; urgency=medium
 
   [ Thomas Hamel ]
