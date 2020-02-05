@@ -10,6 +10,7 @@ Build-Depends: debhelper (>= 10),
                libibumad-dev (>= 1.3.10.2),
                libibverbs-dev (>= 1.1.2),
                libssl-dev (>= 1.0.1),
+               python (>= 2.7),
                zlib1g-dev,
 
 Package: opa-fm

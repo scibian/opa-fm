@@ -1,4 +1,3 @@
 makefile-osvendor.patch
-fix-manpage-errors.patch
 port-fm_capture.patch
 remove-json-c.patch

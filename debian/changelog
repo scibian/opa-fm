@@ -1,3 +1,15 @@
+opa-fm (10.10.1.0-35-1ifs+deb9) stretch; urgency=medium
+
+  * New upstream version 10.10.1.0-35 from IFS RHEL76 10.10.1.0.36.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Wed, 05 Feb 2020 17:36:42 -0600
+
+opa-fm (10.9.3.1-1-1ifs+deb9) stretch; urgency=medium
+
+  * Import opa-fm 10.9.3.1-1 from IFS RHEL76 10.9.3.1.1 upstream.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 27 Jun 2019 20:04:11 -0500
+
 opa-fm (10.9.2.0-7-1ifs+deb9) stretch; urgency=medium
 
   * Import opa-fm 10.9.2.0-7 from IFS RHEL76 10.9.2.0.9 upstream.
