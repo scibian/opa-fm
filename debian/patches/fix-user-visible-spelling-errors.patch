@@ -1,0 +1,151 @@
+Description: Fix user-visible spelling errors
+Author: Brian T. Smith <bsmith@systemfabricworks.com>
+Forwarded: no
+Last-Update: <2020-12-10>
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/Esm/ib/test/cs/vs_thread_test.c
++++ b/Esm/ib/test/cs/vs_thread_test.c
+@@ -151,13 +151,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -204,13 +204,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -257,13 +257,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -737,13 +737,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -1002,13 +1002,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -1460,13 +1460,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+@@ -1891,13 +1891,13 @@
+     /* Argv[0] == thread test index */
+     if (argc < 1)
+     {
+-        IB_LOG_ERROR ("Internal test errror, no arguments", 0);
++        IB_LOG_ERROR ("Internal test error, no arguments", 0);
+         return;
+     }
+ 
+     if (!argv[0])
+     {
+-        IB_LOG_ERROR ("Internal test errror, thread value not passed index", 0);
++        IB_LOG_ERROR ("Internal test error, thread value not passed index", 0);
+         return;
+     }
+     idx = my_atou(argv[0]);
+--- a/Xml/config_compression.c
++++ b/Xml/config_compression.c
+@@ -207,7 +207,7 @@
+ 							break;
+ 						}
+ 						if (header.version != COMP_VERSION) {
+-							SCP_LOG("Unsuported compress file version %d", __FUNCTION__, header.version);
++							SCP_LOG("Unsupported compress file version %d", __FUNCTION__, header.version);
+ 							retVal = -1;
+ 							break;
+ 						}
+--- a/opamgt/src/opamgt.c
++++ b/opamgt/src/opamgt.c
+@@ -1466,7 +1466,7 @@
+ 	}
+ 
+ 	if (port->umad_agents[class_ver][mclass] != OMGT_INVALID_AGENTID) {
+-		OMGT_OUTPUT_ERROR(port, "WARNINIG re-register of class 0x%x; version 0x%x; was %d\n",
++		OMGT_OUTPUT_ERROR(port, "WARNING re-register of class 0x%x; version 0x%x; was %d\n",
+ 					mclass, class_ver, port->umad_agents[class_ver][mclass]);
+ 		umad_unregister(port->umad_fd, port->umad_agents[class_ver][mclass]);
+ 		rereg = 1;
+@@ -1479,7 +1479,7 @@
+ 	}
+ 
+ 	if (rereg)
+-		OMGT_OUTPUT_ERROR(port, "WARNINIG re-register new %d\n", aid);
++		OMGT_OUTPUT_ERROR(port, "WARNING re-register new %d\n", aid);
+ 
+ 	// Store the agent id; be able to correlate it to mgmt class/version.
+ 	port->umad_agents[class_ver][mclass] = (int)aid;

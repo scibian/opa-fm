@@ -1,3 +1,17 @@
+opa-fm (10.10.3.1-1-1ifs+deb9) stretch; urgency=medium
+
+  * New upstream version 10.10.3.1-1 from IFS RHEL77 10.10.3.1.1.
+  * Fix user-visible spelling errors.
+  * Fully specify package contents in d/opa-fm.install.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Thu, 10 Dec 2020 15:19:51 -0600
+
+opa-fm (10.10.2.0-44-1ifs+deb9) stretch; urgency=medium
+
+  * New upstream version 10.10.2.0-44 from IFS RHEL77 10.10.2.0.44.
+
+ -- Brian T. Smith <bsmith@systemfabricworks.com>  Mon, 22 Jun 2020 14:07:02 -0500
+
 opa-fm (10.10.1.0-35-1ifs+deb9) stretch; urgency=medium
 
   * New upstream version 10.10.1.0-35 from IFS RHEL76 10.10.1.0.36.

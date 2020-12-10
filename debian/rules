@@ -1,5 +1,7 @@
 #!/usr/bin/make -f
 
+DESTDIR=$(CURDIR)/debian/tmp
+
 %:
 	dh $@ --parallel --with=systemd
 
@@ -13,9 +15,9 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	BUILDDIR= DESTDIR=$(CURDIR)/debian/opa-fm RPM_INS=n ./Esm/fm_install.sh
-	mv $(CURDIR)/debian/opa-fm/usr/lib/systemd/system/opafm.service $(CURDIR)/debian/opa-fm.opafm.service
-	chmod a-x ./debian/opa-fm/usr/share/opa-fm/opafm_src.xml
+	BUILDDIR= DESTDIR=$(DESTDIR) RPM_INS=n ./Esm/fm_install.sh
+	mv $(DESTDIR)/usr/lib/systemd/system/opafm.service $(CURDIR)/debian/opa-fm.opafm.service
+	chmod a-x $(DESTDIR)/usr/share/opa-fm/opafm_src.xml
 	dh_auto_install
 
 override_dh_systemd_enable:
@@ -26,3 +28,4 @@ override_dh_systemd_start:
 
 override_dh_installdocs:
 	dh_installdocs --link-doc=opa-fm
+
