@@ -1,3 +1,4 @@
 makefile-osvendor.patch
 port-fm_capture.patch
 remove-json-c.patch
+fix-user-visible-spelling-errors.patch

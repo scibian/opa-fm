@@ -1,10 +1,10 @@
 # BEGIN_ICS_COPYRIGHT8 ****************************************
-# 
-# Copyright (c) 2015-2018, Intel Corporation
-# 
+#
+# Copyright (c) 2015-2020, Intel Corporation
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-# 
+#
 #     * Redistributions of source code must retain the above copyright notice,
 #       this list of conditions and the following disclaimer.
 #     * Redistributions in binary form must reproduce the above copyright
@@ -13,7 +13,7 @@
 #     * Neither the name of Intel Corporation nor the names of its contributors
 #       may be used to endorse or promote products derived from this software
 #       without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -24,13 +24,13 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-# 
+#
 # END_ICS_COPYRIGHT8   ****************************************
 
 #[ICS VERSION STRING: unknown]
 Name: opa-fm
-Version: 10.10.1.0
-Release: 35%{?dist}
+Version: 10.10.3.1
+Release: 1%{?dist}
 %if 0%{?rhel}
 Epoch: 1
 %endif
@@ -49,8 +49,8 @@ ExclusiveArch: x86_64
 Requires: rdma
 
 BuildRequires: expat-devel, rdma-core-devel, zlib-devel, openssl-devel
-
 BuildRequires: systemd %{?systemd_requires} %{?BuildRequires}
+
 Requires: systemd %{?systemd_requires}
 Requires: libibumad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, openssl%{?_isa}
 
@@ -58,7 +58,7 @@ Requires: libibumad%{?_isa}, libibverbs%{?_isa}, rdma, expat%{?_isa}, libhfi1, o
 The %{name} contains Intel Omni-Path fabric management applications. This 
 includes: the Subnet Manager, Baseboard Manager, Performance Manager, 
 Fabric Executive, and some fabric management tools.
-IFSComponent: FM 10.10.1.0.35%{?dist}
+IFSComponent: FM 10.10.3.1.1%{?dist}
 
 %prep
 %setup -q -c
